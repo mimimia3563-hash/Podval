@@ -1,5 +1,5 @@
 --[[
-	AdminPanelUI v0.6  (LocalScript)
+	AdminPanelUI v0.7  (LocalScript)
 	Put in: StarterPlayer > StarterPlayerScripts
 
 	- One script, auto PC / mobile layout
@@ -53,7 +53,7 @@ local CONFIG = {
 		FinalPosition = Vector3.new(114, 2056, 2),
 		WaitSeconds = 1, -- Delay between the first and final teleport
 		LoopEnabled = true, -- true = repeat; false = run only once
-		LoopCount = 3, -- Number of cycles; 0 = repeat until you press Stop
+		LoopCount = 0, -- 0 = repeat forever until you press Stop
 		LoopDelaySeconds = 1, -- Delay between completed cycles
 	},
 }
@@ -851,7 +851,7 @@ do
 	local platform = (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled) and "Mobile" or "PC"
 	infoRow(info, "Platform", platform)
 	infoRow(info, "Toggle key", CONFIG.ToggleKey.Name)
-	infoRow(info, "Version", "0.6")
+	infoRow(info, "Version", "0.7")
 end
 
 -- Actions
@@ -866,7 +866,7 @@ do
 	local teleportCard = createCard(
 		page,
 		"Teleport loop",
-		"First position → Final position. The player will NOT be killed."
+		"First position → Final position. The loop resumes automatically after a respawn."
 	)
 
 	local tpBtn = create("TextButton", {
@@ -881,25 +881,28 @@ do
 	}, { corner(8) })
 	addButtonFeedback(tpBtn, Theme.Elevated, Theme.Stroke, Theme.Surface)
 
+	-- Keeps waiting for a living character if the game respawns the player.
+	-- This script does not kill or damage the character.
+	local function waitForLivingCharacter()
+		while not stopCycleRequested do
+			local char = player.Character
+			if char then
+				local root = char:FindFirstChild("HumanoidRootPart")
+				local humanoid = char:FindFirstChildOfClass("Humanoid")
+				if char == player.Character and root and humanoid and humanoid.Health > 0 then
+					return char, root, humanoid
+				end
+			end
+			task.wait(0.1)
+		end
+		return nil, nil, nil
+	end
+
 	tpBtn.MouseButton1Click:Connect(function()
 		-- Clicking while the loop is active requests a clean stop.
 		if cycleRunning then
 			stopCycleRequested = true
 			tpBtn.Text = "Stopping..."
-			return
-		end
-
-		local char = player.Character
-		local root = char and char:FindFirstChild("HumanoidRootPart")
-		local humanoid = char and char:FindFirstChildOfClass("Humanoid")
-
-		if not root or not humanoid or humanoid.Health <= 0 then
-			tpBtn.Text = "Character not ready"
-			task.delay(1.5, function()
-				if tpBtn.Parent and not cycleRunning then
-					tpBtn.Text = "Start teleport loop"
-				end
-			end)
 			return
 		end
 
@@ -914,35 +917,64 @@ do
 			local completedCycles = 0
 
 			while not stopCycleRequested do
-				-- Do not attach to a new character or add respawn handling.
-				if char ~= player.Character or not root.Parent or humanoid.Health <= 0 then
+				-- If the character is dead or respawning, wait until the new one is ready.
+				local char, root, humanoid = waitForLivingCharacter()
+				if stopCycleRequested or not char then
 					break
 				end
 
-				-- First teleport
-				root.CFrame = CFrame.new(cycleConfig.FirstPosition)
+				-- Start/restart this cycle on the currently living character.
+				if char ~= player.Character or not root.Parent or humanoid.Health <= 0 then
+					task.wait(0.1)
+					continue
+				end
+
+				local movedToFirst = pcall(function()
+					root.CFrame = CFrame.new(cycleConfig.FirstPosition)
+				end)
+				if not movedToFirst then
+					task.wait(0.1)
+					continue
+				end
 				notify("First teleport complete")
 
-				task.wait(math.max(0, tonumber(cycleConfig.WaitSeconds) or 1))
+				-- Wait in short steps so a respawn is detected promptly.
+				local waitSeconds = math.max(0, tonumber(cycleConfig.WaitSeconds) or 1)
+				local waitStarted = os.clock()
+				local characterChanged = false
+				while os.clock() - waitStarted < waitSeconds and not stopCycleRequested do
+					if char ~= player.Character or not root.Parent or humanoid.Health <= 0 then
+						characterChanged = true
+						break
+					end
+					task.wait(math.min(0.1, waitSeconds - (os.clock() - waitStarted)))
+				end
+
 				if stopCycleRequested then
 					break
 				end
 
-				if char ~= player.Character or not root.Parent or humanoid.Health <= 0 then
-					break
+				-- If a respawn happened mid-cycle, do not count it; restart from
+				-- FirstPosition when the new character becomes available.
+				if characterChanged or char ~= player.Character or not root.Parent or humanoid.Health <= 0 then
+					continue
 				end
 
-				-- Final teleport. There is deliberately no kill / damage call here.
-				root.CFrame = CFrame.new(cycleConfig.FinalPosition)
+				-- Final teleport. No health, damage, or death operation is performed.
+				local movedToFinal = pcall(function()
+					root.CFrame = CFrame.new(cycleConfig.FinalPosition)
+				end)
+				if not movedToFinal then
+					continue
+				end
 				notify("Final teleport complete")
 				completedCycles += 1
 
-				-- Stop after one pass when looping is disabled.
 				if not loopEnabled then
 					break
 				end
 
-				-- LoopCount = 0 means unlimited repeats; click the button to stop.
+				-- LoopCount = 0 means unlimited repeats until Stop is clicked.
 				if loopCount > 0 and completedCycles >= loopCount then
 					break
 				end
