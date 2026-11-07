@@ -1,12 +1,11 @@
 --[[
-	AdminPanelUI v0.2  (LocalScript)
+	AdminPanelUI v0.3  (LocalScript)
 	Put in: StarterPlayer > StarterPlayerScripts
 
 	- One script, auto PC / mobile layout
-	- Mobile: bottom tab bar, bigger touch targets, safe sizing
+	- Actions tab: teleport button + auto teleport on respawn
 	- Drag, minimize, close, floating toggle button
-	- Debug box + on-screen error box (set CONFIG.Debug = false when done)
-	- Auto-recenter if the window ends up offscreen
+	- Debug box + on-screen error box
 ]]
 
 local Players = game:GetService("Players")
@@ -37,7 +36,6 @@ local function showFatal(err)
 	l.Parent = g
 end
 
--- NOTE: the whole script lives inside main() so any crash can be caught and shown.
 local function main()
 
 ------------------------------------------------------------------------
@@ -48,7 +46,7 @@ local CONFIG = {
 	ToggleKey = Enum.KeyCode.RightShift,
 	MaxSize = Vector2.new(520, 340),
 	NarrowBreakpoint = 440,
-	Debug = true,
+	Debug = false,
 }
 
 local Theme = {
@@ -64,18 +62,18 @@ local Theme = {
 local Settings = {
 	Notifications = true,
 	CompactMode = false,
+	AutoTeleport = false,
 }
 
 local TAB_DEFS = {
 	{ name = "Home", icon = "🏠" },
-	{ name = "Commands", icon = "⌨️" },
+	{ name = "Actions", icon = "⚡" },
 	{ name = "Settings", icon = "⚙️" },
 }
 
-local TOP_SAFE = 40 -- keep clear of Roblox's own top bar
+local TOP_SAFE = 40
 local TAB_BAR_H = 56
 
--- these change depending on mobile / PC mode
 local mobile = false
 local topbarH = 40
 local toggleSize = 46
@@ -200,7 +198,6 @@ local gui = create("ScreenGui", {
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 	Parent = playerGui,
 })
--- keep clear of phone notches (ignored if not supported)
 pcall(function()
 	gui.ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets
 end)
@@ -289,7 +286,6 @@ local sideLayout = create("UIListLayout", {
 	SortOrder = Enum.SortOrder.LayoutOrder,
 })
 
--- Sidebar on PC, bottom tab bar on mobile
 local sidebar = create("Frame", {
 	Name = "Sidebar",
 	Parent = body,
@@ -422,7 +418,6 @@ local function centerWindow(animate)
 	end
 end
 
--- Safety net: if the window is really offscreen, bring it back
 local function ensureOnScreen()
 	if not isOpen or not window.Visible then
 		return
@@ -461,7 +456,6 @@ local function applyLayout()
 	topbarH = mobile and 48 or 40
 	toggleSize = mobile and 54 or 46
 
-	-- top bar buttons
 	local bw = mobile and 42 or 34
 	local bh = mobile and 36 or 30
 	closeBtn.Size = UDim2.fromOffset(bw, bh)
@@ -480,7 +474,6 @@ local function applyLayout()
 	local bodyH = fullSize.Y - topbarH
 	body.Size = UDim2.new(1, 0, 0, bodyH)
 
-	-- navigation: sidebar (PC) or bottom bar (mobile)
 	local n = #TAB_DEFS
 	if mobile then
 		sideLayout.FillDirection = Enum.FillDirection.Horizontal
@@ -753,287 +746,299 @@ local function createToggle(parent, text, key)
 	local knob = create("Frame", {
 		Parent = track,
 		AnchorPoint = Vector2.new(0, 0.5),
-    Position = UDim2.new(0, 3, 0.5, 0),
-			Size = UDim2.fromOffset(20, 20),
-			BackgroundColor3 = Color3.new(1, 1, 1),
-			BorderSizePixel = 0,
-		}, { pill() })
+		Position = UDim2.new(0, 3, 0.5, 0),
+		Size = UDim2.fromOffset(20, 20),
+		BackgroundColor3 = Color3.new(1, 1, 1),
+		BorderSizePixel = 0,
+	}, { pill() })
 
-		local function render(animate)
-			local on = Settings[key]
-			local goalPos = on and UDim2.new(1, -23, 0.5, 0) or UDim2.new(0, 3, 0.5, 0)
-			local goalColor = on and Theme.Accent or Theme.Stroke
-			if animate then
-				tween(knob, 0.2, { Position = goalPos })
-				tween(track, 0.2, { BackgroundColor3 = goalColor })
-			else
-				knob.Position = goalPos
-				track.BackgroundColor3 = goalColor
-			end
+	local function render(animate)
+		local on = Settings[key]
+		local goalPos = on and UDim2.new(1, -23, 0.5, 0) or UDim2.new(0, 3, 0.5, 0)
+		local goalColor = on and Theme.Accent or Theme.Stroke
+		if animate then
+			tween(knob, 0.2, { Position = goalPos })
+			tween(track, 0.2, { BackgroundColor3 = goalColor })
+		else
+			knob.Position = goalPos
+			track.BackgroundColor3 = goalColor
 		end
-
-		track.MouseButton1Click:Connect(function()
-			Settings[key] = not Settings[key]
-			render(true)
-		end)
-		onAccent(function(instant)
-			render(not instant)
-		end)
 	end
 
-	------------------------------------------------------------------------
-	-- PAGES
-	------------------------------------------------------------------------
-	local pages = {}
+	track.MouseButton1Click:Connect(function()
+		Settings[key] = not Settings[key]
+		render(true)
+	end)
+	onAccent(function(instant)
+		render(not instant)
+	end)
+end
 
-	-- Home
-	do
-		local page = createPage()
-		pages.Home = page
-		createCard(page, "Welcome, " .. player.DisplayName, "The panel shell is ready. Commands will be plugged in next.")
-		local info = createCard(page, "Info")
-		local platform = (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled) and "Mobile" or "PC"
-		infoRow(info, "Platform", platform)
-		infoRow(info, "Toggle key", CONFIG.ToggleKey.Name)
-		infoRow(info, "Version", "0.2 (UI only)")
-	end
+------------------------------------------------------------------------
+-- PAGES
+------------------------------------------------------------------------
+local pages = {}
 
-	-- Commands (placeholder)
-	do
-		local page = createPage()
-		pages.Commands = page
-		createCard(page, "Commands", "Nothing is wired yet. The bar below is a visual placeholder.")
-		local barCard = createCard(page, "Command bar")
-		local stroke = create("UIStroke", { Thickness = 1.5, Transparency = 1 })
-		trackAccent(stroke, "Color")
-		local box = create("TextBox", {
-			Parent = barCard,
-			LayoutOrder = nextOrder(),
-			Size = UDim2.new(1, 0, 0, 40),
-			BackgroundColor3 = Theme.Elevated,
-			BorderSizePixel = 0,
-			ClearTextOnFocus = false,
-			PlaceholderText = "Type a command...",
-			PlaceholderColor3 = Theme.SubText,
-			Text = "",
-			TextColor3 = Theme.Text,
-			Font = Enum.Font.Gotham,
-			TextSize = 14,
-			TextXAlignment = Enum.TextXAlignment.Left,
-		}, {
-			corner(8),
-			create("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }),
-			stroke,
-		})
-		box.Focused:Connect(function()
-			tween(stroke, 0.2, { Transparency = 0 })
-		end)
-		box.FocusLost:Connect(function()
-			tween(stroke, 0.2, { Transparency = 1 })
-			-- command handling goes here later
-		end)
-	end
+-- Home
+do
+	local page = createPage()
+	pages.Home = page
+	createCard(page, "Welcome, " .. player.DisplayName, "The panel is ready. Use the Actions tab for buttons.")
+	local info = createCard(page, "Info")
+	local platform = (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled) and "Mobile" or "PC"
+	infoRow(info, "Platform", platform)
+	infoRow(info, "Toggle key", CONFIG.ToggleKey.Name)
+	infoRow(info, "Version", "0.3")
+end
 
-	-- Settings
-	do
-		local page = createPage()
-		pages.Settings = page
+-- Actions
+do
+	local page = createPage()
+	pages.Actions = page
 
-		local appearance = createCard(page, "Appearance", "Accent color")
-		local swatchRow = create("Frame", {
-			Parent = appearance,
-			LayoutOrder = nextOrder(),
-			BackgroundTransparency = 1,
-			Size = UDim2.new(1, 0, 0, 36),
-		}, {
-			create("UIListLayout", {
-				FillDirection = Enum.FillDirection.Horizontal,
-				Padding = UDim.new(0, 10),
-				VerticalAlignment = Enum.VerticalAlignment.Center,
-				SortOrder = Enum.SortOrder.LayoutOrder,
-			}),
-		})
+	local TELEPORT_POS = Vector3.new(114, 2056, 2)
 
-		local ACCENTS = {
-			Color3.fromRGB(88, 135, 255),
-			Color3.fromRGB(150, 100, 255),
-			Color3.fromRGB(70, 200, 130),
-			Color3.fromRGB(255, 150, 70),
-			Color3.fromRGB(255, 100, 160),
-		}
-		local swatches = {}
-		for _, color in ipairs(ACCENTS) do
-			local stroke = create("UIStroke", {
-				Color = Theme.Text,
-				Thickness = 2,
-				Transparency = (color == Theme.Accent) and 0 or 1,
-			})
-			local s = create("TextButton", {
-				Parent = swatchRow,
-				LayoutOrder = nextOrder(),
-				Size = UDim2.fromOffset(32, 32),
-				BackgroundColor3 = color,
-				Text = "",
-				AutoButtonColor = false,
-				BorderSizePixel = 0,
-			}, { pill(), stroke })
-			table.insert(swatches, { color = color, stroke = stroke })
-			s.MouseButton1Click:Connect(function()
-				setAccent(color)
-				for _, sw in ipairs(swatches) do
-					tween(sw.stroke, 0.2, { Transparency = (sw.color == color) and 0 or 1 })
-				end
-			end)
+	local teleportCard = createCard(page, "Teleport", "Position: 114, 2056, 2")
+	local tpBtn = create("TextButton", {
+		Parent = teleportCard,
+		LayoutOrder = nextOrder(),
+		Size = UDim2.new(1, 0, 0, 40),
+		Text = "Teleport to position",
+		TextColor3 = Theme.Text,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 14,
+		BorderSizePixel = 0,
+	}, { corner(8) })
+	addButtonFeedback(tpBtn, Theme.Elevated, Theme.Stroke, Theme.Surface)
+
+	tpBtn.MouseButton1Click:Connect(function()
+		local char = player.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		if root then
+			root.CFrame = CFrame.new(TELEPORT_POS)
+			tpBtn.Text = "✓ Teleported"
+		else
+			tpBtn.Text = "Character not ready"
 		end
-
-		local prefs = createCard(page, "Preferences")
-		createToggle(prefs, "Notifications", "Notifications")
-		createToggle(prefs, "Compact mode", "CompactMode")
-
-		local windowCard = createCard(page, "Window")
-		local resetBtn = create("TextButton", {
-			Parent = windowCard,
-			LayoutOrder = nextOrder(),
-			Size = UDim2.new(1, 0, 0, 40),
-			Text = "Reset window position",
-			TextColor3 = Theme.Text,
-			Font = Enum.Font.GothamMedium,
-			TextSize = 14,
-			BorderSizePixel = 0,
-		}, { corner(8) })
-		addButtonFeedback(resetBtn, Theme.Elevated, Theme.Stroke, Theme.Surface)
-		resetBtn.MouseButton1Click:Connect(function()
-			centerWindow(true)
+		task.delay(1, function()
+			tpBtn.Text = "Teleport to position"
 		end)
-	end
+	end)
 
-	------------------------------------------------------------------------
-	-- TABS
-	------------------------------------------------------------------------
-	local function selectTab(name)
-		if activeTab == name then
+	local autoCard = createCard(page, "Auto teleport", "When on, you teleport 1 second after every respawn.")
+	createToggle(autoCard, "Teleport on respawn", "AutoTeleport")
+
+	player.CharacterAdded:Connect(function(char)
+		if not Settings.AutoTeleport then
 			return
 		end
-		activeTab = name
-		for n, t in pairs(tabs) do
-			local on = (n == name)
-			tween(t.btn, 0.2, {
-				BackgroundTransparency = on and 0 or 1,
-				TextColor3 = on and Theme.Text or Theme.SubText,
-			})
-			tween(t.bar, 0.25, { Size = barSize(on) })
-			if on then
-				t.page.Position = UDim2.fromOffset(14, 0)
-				t.page.Visible = true
-				tween(t.page, 0.3, { Position = UDim2.fromOffset(0, 0) })
-			else
-				t.page.Visible = false
-			end
+		local root = char:WaitForChild("HumanoidRootPart", 5)
+		task.wait(1)
+		if Settings.AutoTeleport and root and root.Parent then
+			root.CFrame = CFrame.new(TELEPORT_POS)
 		end
-	end
+	end)
+end
 
-	for _, def in ipairs(TAB_DEFS) do
-		local btn = create("TextButton", {
-			Parent = sidebar,
+-- Settings
+do
+	local page = createPage()
+	pages.Settings = page
+
+	local appearance = createCard(page, "Appearance", "Accent color")
+	local swatchRow = create("Frame", {
+		Parent = appearance,
+		LayoutOrder = nextOrder(),
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 36),
+	}, {
+		create("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			Padding = UDim.new(0, 10),
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+
+	local ACCENTS = {
+		Color3.fromRGB(88, 135, 255),
+		Color3.fromRGB(150, 100, 255),
+		Color3.fromRGB(70, 200, 130),
+		Color3.fromRGB(255, 150, 70),
+		Color3.fromRGB(255, 100, 160),
+	}
+	local swatches = {}
+	for _, color in ipairs(ACCENTS) do
+		local stroke = create("UIStroke", {
+			Color = Theme.Text,
+			Thickness = 2,
+			Transparency = (color == Theme.Accent) and 0 or 1,
+		})
+		local s = create("TextButton", {
+			Parent = swatchRow,
 			LayoutOrder = nextOrder(),
-			Size = UDim2.new(1, 0, 0, 38),
-			BackgroundColor3 = Theme.Elevated,
-			BackgroundTransparency = 1,
+			Size = UDim2.fromOffset(32, 32),
+			BackgroundColor3 = color,
+			Text = "",
 			AutoButtonColor = false,
 			BorderSizePixel = 0,
-			Font = Enum.Font.GothamMedium,
-			TextSize = 14,
-			TextColor3 = Theme.SubText,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			Text = "",
-		}, { corner(8) })
-
-		local bar = create("Frame", {
-			Parent = btn,
-			AnchorPoint = Vector2.new(0, 0.5),
-			Position = UDim2.new(0, 2, 0.5, 0),
-			Size = UDim2.fromOffset(3, 0),
-			BorderSizePixel = 0,
-		}, { pill() })
-		trackAccent(bar, "BackgroundColor3")
-
-		tabs[def.name] = { btn = btn, bar = bar, page = pages[def.name] }
-
-		btn.MouseEnter:Connect(function()
-			if activeTab ~= def.name then
-				tween(btn, 0.15, { BackgroundTransparency = 0.5 })
+		}, { pill(), stroke })
+		table.insert(swatches, { color = color, stroke = stroke })
+		s.MouseButton1Click:Connect(function()
+			setAccent(color)
+			for _, sw in ipairs(swatches) do
+				tween(sw.stroke, 0.2, { Transparency = (sw.color == color) and 0 or 1 })
 			end
-		end)
-		btn.MouseLeave:Connect(function()
-			if activeTab ~= def.name then
-				tween(btn, 0.15, { BackgroundTransparency = 1 })
-			end
-		end)
-		btn.MouseButton1Click:Connect(function()
-			selectTab(def.name)
 		end)
 	end
 
-	------------------------------------------------------------------------
-	-- WIRE UP + START
-	------------------------------------------------------------------------
-	closeBtn.MouseButton1Click:Connect(function()
-		setOpen(false)
-	end)
+	local prefs = createCard(page, "Preferences")
+	createToggle(prefs, "Notifications", "Notifications")
+	createToggle(prefs, "Compact mode", "CompactMode")
 
-	minBtn.MouseButton1Click:Connect(function()
-		setMinimized(not minimized)
+	local windowCard = createCard(page, "Window")
+	local resetBtn = create("TextButton", {
+		Parent = windowCard,
+		LayoutOrder = nextOrder(),
+		Size = UDim2.new(1, 0, 0, 40),
+		Text = "Reset window position",
+		TextColor3 = Theme.Text,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 14,
+		BorderSizePixel = 0,
+	}, { corner(8) })
+	addButtonFeedback(resetBtn, Theme.Elevated, Theme.Stroke, Theme.Surface)
+	resetBtn.MouseButton1Click:Connect(function()
+		centerWindow(true)
 	end)
+end
 
-	UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if gameProcessed then
-			return
+------------------------------------------------------------------------
+-- TABS
+------------------------------------------------------------------------
+local function selectTab(name)
+	if activeTab == name then
+		return
+	end
+	activeTab = name
+	for n, t in pairs(tabs) do
+		local on = (n == name)
+		tween(t.btn, 0.2, {
+			BackgroundTransparency = on and 0 or 1,
+			TextColor3 = on and Theme.Text or Theme.SubText,
+		})
+		tween(t.bar, 0.25, { Size = barSize(on) })
+		if on then
+			t.page.Position = UDim2.fromOffset(14, 0)
+			t.page.Visible = true
+			tween(t.page, 0.3, { Position = UDim2.fromOffset(0, 0) })
+		else
+			t.page.Visible = false
 		end
-		if input.KeyCode == CONFIG.ToggleKey then
-			setOpen(not isOpen)
+	end
+end
+
+for _, def in ipairs(TAB_DEFS) do
+	local btn = create("TextButton", {
+		Parent = sidebar,
+		LayoutOrder = nextOrder(),
+		Size = UDim2.new(1, 0, 0, 38),
+		BackgroundColor3 = Theme.Elevated,
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 14,
+		TextColor3 = Theme.SubText,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = "",
+	}, { corner(8) })
+
+	local bar = create("Frame", {
+		Parent = btn,
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 2, 0.5, 0),
+		Size = UDim2.fromOffset(3, 0),
+		BorderSizePixel = 0,
+	}, { pill() })
+	trackAccent(bar, "BackgroundColor3")
+
+	tabs[def.name] = { btn = btn, bar = bar, page = pages[def.name] }
+
+	btn.MouseEnter:Connect(function()
+		if activeTab ~= def.name then
+			tween(btn, 0.15, { BackgroundTransparency = 0.5 })
 		end
 	end)
+	btn.MouseLeave:Connect(function()
+		if activeTab ~= def.name then
+			tween(btn, 0.15, { BackgroundTransparency = 1 })
+		end
+	end)
+	btn.MouseButton1Click:Connect(function()
+		selectTab(def.name)
+	end)
+end
 
-	-- wait (max 2s) for the gui to get a real size before the first layout
-	local waited = 0
-	while gui.AbsoluteSize.X < 10 and waited < 2 do
-		waited += task.wait()
+------------------------------------------------------------------------
+-- WIRE UP + START
+------------------------------------------------------------------------
+closeBtn.MouseButton1Click:Connect(function()
+	setOpen(false)
+end)
+
+minBtn.MouseButton1Click:Connect(function()
+	setMinimized(not minimized)
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then
+		return
 	end
-
-	applyLayout()
-	gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(applyLayout)
-	selectTab("Home")
-	setOpen(true)
-
-	print(string.format(
-		"[AdminPanelUI] started | mobile=%s | screen=%.0fx%.0f",
-		tostring(mobile),
-		getScreen().X,
-		getScreen().Y
-		))
-
-	if debugLabel then
-		task.spawn(function()
-			while gui.Parent do
-				local gs = gui.AbsoluteSize
-				debugLabel.Text = string.format(
-					"mode:%s touch:%s kb:%s\ngui:%.0fx%.0f  win:%.0f,%.0f %.0fx%.0f\nvisible:%s open:%s",
-					mobile and "MOBILE" or "PC",
-					tostring(UserInputService.TouchEnabled),
-					tostring(UserInputService.KeyboardEnabled),
-					gs.X,
-					gs.Y,
-					window.AbsolutePosition.X,
-					window.AbsolutePosition.Y,
-					window.AbsoluteSize.X,
-					window.AbsoluteSize.Y,
-					tostring(window.Visible),
-					tostring(isOpen)
-				)
-				task.wait(0.5)
-			end
-		end)
+	if input.KeyCode == CONFIG.ToggleKey then
+		setOpen(not isOpen)
 	end
+end)
+
+local waited = 0
+while gui.AbsoluteSize.X < 10 and waited < 2 do
+	waited += task.wait()
+end
+
+applyLayout()
+gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(applyLayout)
+selectTab("Home")
+setOpen(true)
+
+print(string.format(
+	"[AdminPanelUI] started | mobile=%s | screen=%.0fx%.0f",
+	tostring(mobile),
+	getScreen().X,
+	getScreen().Y
+))
+
+if debugLabel then
+	task.spawn(function()
+		while gui.Parent do
+			local gs = gui.AbsoluteSize
+			debugLabel.Text = string.format(
+				"mode:%s touch:%s kb:%s\ngui:%.0fx%.0f  win:%.0f,%.0f %.0fx%.0f\nvisible:%s open:%s",
+				mobile and "MOBILE" or "PC",
+				tostring(UserInputService.TouchEnabled),
+				tostring(UserInputService.KeyboardEnabled),
+				gs.X,
+				gs.Y,
+				window.AbsolutePosition.X,
+				window.AbsolutePosition.Y,
+				window.AbsoluteSize.X,
+				window.AbsoluteSize.Y,
+				tostring(window.Visible),
+				tostring(isOpen)
+			)
+			task.wait(0.5)
+		end
+	end)
+end
 
 end -- main
 
