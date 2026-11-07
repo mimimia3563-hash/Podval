@@ -1,12 +1,11 @@
 --[[
-	AdminPanelUI v0.5 (LocalScript)
+	AdminPanelUI v0.6  (LocalScript)
 	Put in: StarterPlayer > StarterPlayerScripts
 
-	- PC / mobile layout
-	- Manual two-stage teleport cycle
+	- One script, auto PC / mobile layout
+	- Actions tab: configurable, stoppable teleport loop
 	- Drag, minimize, close, floating toggle button
-	- Compact mode and notifications
-	- Optimized dragging
+	- Debug box + on-screen error box
 ]]
 
 local Players = game:GetService("Players")
@@ -17,13 +16,13 @@ local StarterGui = game:GetService("StarterGui")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
+-- Shows errors on screen so you can read them on a phone
 local function showFatal(err)
 	local g = Instance.new("ScreenGui")
 	g.Name = "AdminPanelError"
 	g.ResetOnSpawn = false
 	g.DisplayOrder = 999
 	g.Parent = playerGui
-
 	local l = Instance.new("TextLabel")
 	l.Size = UDim2.new(1, -20, 0, 160)
 	l.Position = UDim2.fromOffset(10, 50)
@@ -43,19 +42,19 @@ local function main()
 ------------------------------------------------------------------------
 -- CONFIG / THEME
 ------------------------------------------------------------------------
-
 local CONFIG = {
 	Title = "Admin Panel",
 	ToggleKey = Enum.KeyCode.RightShift,
 	MaxSize = Vector2.new(520, 340),
 	NarrowBreakpoint = 440,
 	Debug = false,
-
 	TeleportCycle = {
 		FirstPosition = Vector3.new(52, 3660, -2),
 		FinalPosition = Vector3.new(114, 2056, 2),
-		WaitSeconds = 1,
-		KillAfterFinalTeleport = true,
+		WaitSeconds = 1, -- Delay between the first and final teleport
+		LoopEnabled = true, -- true = repeat; false = run only once
+		LoopCount = 3, -- Number of cycles; 0 = repeat until you press Stop
+		LoopDelaySeconds = 1, -- Delay between completed cycles
 	},
 }
 
@@ -75,7 +74,6 @@ local Settings = {
 }
 
 local compactUpdaters = {}
-
 local function applyCompactMode()
 	for _, update in ipairs(compactUpdaters) do
 		update(Settings.CompactMode)
@@ -86,7 +84,6 @@ local function notify(message)
 	if not Settings.Notifications then
 		return
 	end
-
 	pcall(function()
 		StarterGui:SetCore("SendNotification", {
 			Title = CONFIG.Title,
@@ -112,9 +109,7 @@ local toggleSize = 46
 ------------------------------------------------------------------------
 -- HELPERS
 ------------------------------------------------------------------------
-
 local orderCounter = 0
-
 local function nextOrder()
 	orderCounter += 1
 	return orderCounter
@@ -123,14 +118,9 @@ end
 local function tween(obj, duration, props, style, direction)
 	local t = TweenService:Create(
 		obj,
-		TweenInfo.new(
-			duration,
-			style or Enum.EasingStyle.Quint,
-			direction or Enum.EasingDirection.Out
-		),
+		TweenInfo.new(duration, style or Enum.EasingStyle.Quint, direction or Enum.EasingDirection.Out),
 		props
 	)
-
 	t:Play()
 	return t
 end
@@ -138,37 +128,29 @@ end
 local function create(className, props, children)
 	local inst = Instance.new(className)
 	local parent = props.Parent
-
 	for k, v in pairs(props) do
 		if k ~= "Parent" then
 			inst[k] = v
 		end
 	end
-
 	if children then
 		for _, child in ipairs(children) do
 			child.Parent = inst
 		end
 	end
-
 	inst.Parent = parent
 	return inst
 end
 
 local function corner(radius)
-	return create("UICorner", {
-		CornerRadius = UDim.new(0, radius)
-	})
+	return create("UICorner", { CornerRadius = UDim.new(0, radius) })
 end
 
 local function pill()
-	return create("UICorner", {
-		CornerRadius = UDim.new(1, 0)
-	})
+	return create("UICorner", { CornerRadius = UDim.new(1, 0) })
 end
 
 local accentListeners = {}
-
 local function onAccent(fn)
 	table.insert(accentListeners, fn)
 	fn(true)
@@ -179,16 +161,13 @@ local function trackAccent(inst, prop)
 		if instant then
 			inst[prop] = Theme.Accent
 		else
-			tween(inst, 0.25, {
-				[prop] = Theme.Accent
-			})
+			tween(inst, 0.25, { [prop] = Theme.Accent })
 		end
 	end)
 end
 
 local function setAccent(color)
 	Theme.Accent = color
-
 	for _, fn in ipairs(accentListeners) do
 		fn(false)
 	end
@@ -198,33 +177,20 @@ local function addButtonFeedback(btn, normal, hover, press)
 	press = press or hover
 	btn.AutoButtonColor = false
 	btn.BackgroundColor3 = normal
-
 	local hovering = false
-
 	btn.MouseEnter:Connect(function()
 		hovering = true
-		tween(btn, 0.15, {
-			BackgroundColor3 = hover
-		})
+		tween(btn, 0.15, { BackgroundColor3 = hover })
 	end)
-
 	btn.MouseLeave:Connect(function()
 		hovering = false
-		tween(btn, 0.15, {
-			BackgroundColor3 = normal
-		})
+		tween(btn, 0.15, { BackgroundColor3 = normal })
 	end)
-
 	btn.MouseButton1Down:Connect(function()
-		tween(btn, 0.08, {
-			BackgroundColor3 = press
-		})
+		tween(btn, 0.08, { BackgroundColor3 = press })
 	end)
-
 	btn.MouseButton1Up:Connect(function()
-		tween(btn, 0.15, {
-			BackgroundColor3 = hovering and hover or normal
-		})
+		tween(btn, 0.15, { BackgroundColor3 = hovering and hover or normal })
 	end)
 end
 
@@ -245,11 +211,9 @@ local function label(parent, text, size, color, bold)
 end
 
 ------------------------------------------------------------------------
--- SCREEN GUI + WINDOW
+-- SCREEN GUI + WINDOW SKELETON
 ------------------------------------------------------------------------
-
 local old = playerGui:FindFirstChild("AdminPanelUI")
-
 if old then
 	old:Destroy()
 end
@@ -262,7 +226,6 @@ local gui = create("ScreenGui", {
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 	Parent = playerGui,
 })
-
 pcall(function()
 	gui.ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets
 end)
@@ -278,10 +241,7 @@ local window = create("CanvasGroup", {
 	Size = UDim2.fromOffset(CONFIG.MaxSize.X, CONFIG.MaxSize.Y),
 }, {
 	corner(12),
-	create("UIStroke", {
-		Color = Theme.Stroke,
-		Thickness = 1
-	}),
+	create("UIStroke", { Color = Theme.Stroke, Thickness = 1 }),
 })
 
 local topbar = create("Frame", {
@@ -308,10 +268,7 @@ local dot = create("Frame", {
 	Position = UDim2.new(0, 14, 0.5, 0),
 	Size = UDim2.fromOffset(10, 10),
 	BorderSizePixel = 0,
-}, {
-	pill()
-})
-
+}, { pill() })
 trackAccent(dot, "BackgroundColor3")
 
 local titleLabel = create("TextLabel", {
@@ -336,21 +293,13 @@ local function topButton(text, hover, press)
 		Font = Enum.Font.GothamBold,
 		TextSize = 18,
 		BorderSizePixel = 0,
-	}, {
-		corner(8)
-	})
-
+	}, { corner(8) })
 	addButtonFeedback(b, Theme.Elevated, hover, press)
 	return b
 end
 
 local minBtn = topButton("–", Theme.Stroke, Theme.Surface)
-
-local closeBtn = topButton(
-	"×",
-	Color3.fromRGB(205, 72, 84),
-	Color3.fromRGB(160, 52, 62)
-)
+local closeBtn = topButton("×", Color3.fromRGB(205, 72, 84), Color3.fromRGB(160, 52, 62))
 
 local body = create("Frame", {
 	Name = "Body",
@@ -403,17 +352,11 @@ local toggleBtn = create("TextButton", {
 	ZIndex = 5,
 }, {
 	pill(),
-	create("UIStroke", {
-		Color = Theme.Text,
-		Thickness = 1,
-		Transparency = 0.75
-	}),
+	create("UIStroke", { Color = Theme.Text, Thickness = 1, Transparency = 0.75 }),
 })
-
 trackAccent(toggleBtn, "BackgroundColor3")
 
 local debugLabel = nil
-
 if CONFIG.Debug then
 	debugLabel = create("TextLabel", {
 		Name = "Debug",
@@ -433,9 +376,7 @@ if CONFIG.Debug then
 		ZIndex = 20,
 	}, {
 		corner(6),
-		create("UISizeConstraint", {
-			MaxSize = Vector2.new(420, 80)
-		}),
+		create("UISizeConstraint", { MaxSize = Vector2.new(420, 80) }),
 		create("UIPadding", {
 			PaddingTop = UDim.new(0, 4),
 			PaddingLeft = UDim.new(0, 6),
@@ -447,7 +388,6 @@ end
 ------------------------------------------------------------------------
 -- STATE + LAYOUT
 ------------------------------------------------------------------------
-
 local isOpen = false
 local minimized = false
 local placed = false
@@ -460,74 +400,47 @@ local activeTab = nil
 
 local function getScreen()
 	local s = gui.AbsoluteSize
-
 	if s.X < 10 or s.Y < 10 then
 		local cam = workspace.CurrentCamera
-
 		if cam then
 			s = cam.ViewportSize
 		end
 	end
-
 	return s
 end
 
 local function currentWindowSize()
-	return Vector2.new(
-		fullSize.X,
-		minimized and topbarH or fullSize.Y
-	)
+	return Vector2.new(fullSize.X, minimized and topbarH or fullSize.Y)
 end
 
 local function clampWindowPos(pos, size)
 	local s = getScreen()
 	local maxX = math.max(0, s.X - size.X)
 	local maxY = math.max(TOP_SAFE, s.Y - size.Y)
-
-	return Vector2.new(
-		math.clamp(pos.X, 0, maxX),
-		math.clamp(pos.Y, TOP_SAFE, maxY)
-	)
+	return Vector2.new(math.clamp(pos.X, 0, maxX), math.clamp(pos.Y, TOP_SAFE, maxY))
 end
 
 local function setWindowPos(pos)
 	windowPos = clampWindowPos(pos, currentWindowSize())
-
-	window.Position = UDim2.fromOffset(
-		windowPos.X,
-		windowPos.Y
-	)
+	window.Position = UDim2.fromOffset(windowPos.X, windowPos.Y)
 end
 
 local function setTogglePos(pos)
 	local s = getScreen()
-
 	togglePos = Vector2.new(
 		math.clamp(pos.X, 0, math.max(0, s.X - toggleSize)),
 		math.clamp(pos.Y, TOP_SAFE, math.max(TOP_SAFE, s.Y - toggleSize))
 	)
-
-	toggleBtn.Position = UDim2.fromOffset(
-		togglePos.X,
-		togglePos.Y
-	)
+	toggleBtn.Position = UDim2.fromOffset(togglePos.X, togglePos.Y)
 end
 
 local function centerWindow(animate)
 	local s = getScreen()
 	local size = currentWindowSize()
-
 	windowPos = clampWindowPos((s - size) / 2, size)
-
-	local goal = UDim2.fromOffset(
-		windowPos.X,
-		windowPos.Y
-	)
-
+	local goal = UDim2.fromOffset(windowPos.X, windowPos.Y)
 	if animate then
-		tween(window, 0.4, {
-			Position = goal
-		})
+		tween(window, 0.4, { Position = goal })
 	else
 		window.Position = goal
 	end
@@ -537,21 +450,13 @@ local function ensureOnScreen()
 	if not isOpen or not window.Visible then
 		return
 	end
-
 	local gs = gui.AbsoluteSize
-
 	if gs.X < 10 then
 		return
 	end
-
-	local p = window.AbsolutePosition
-	local sz = window.AbsoluteSize
+	local p, sz = window.AbsolutePosition, window.AbsoluteSize
 	local tol = 24
-
-	if p.X < -tol or p.Y < -tol
-		or p.X + sz.X > gs.X + tol
-		or p.Y + sz.Y > gs.Y + tol then
-
+	if p.X < -tol or p.Y < -tol or p.X + sz.X > gs.X + tol or p.Y + sz.Y > gs.Y + tol then
 		centerWindow(true)
 	end
 end
@@ -564,21 +469,16 @@ local function barSize(on)
 	if mobile then
 		return UDim2.fromOffset(on and 18 or 0, 3)
 	end
-
 	return UDim2.fromOffset(3, on and 18 or 0)
 end
 
 local function applyLayout()
 	local s = getScreen()
-
 	fullSize = Vector2.new(
 		math.clamp(s.X - 24, 240, CONFIG.MaxSize.X),
 		math.clamp(s.Y - TOP_SAFE - 12, 180, CONFIG.MaxSize.Y)
 	)
-
-	local touchOnly = UserInputService.TouchEnabled
-		and not UserInputService.KeyboardEnabled
-
+	local touchOnly = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 	mobile = touchOnly or fullSize.X < CONFIG.NarrowBreakpoint
 
 	topbarH = mobile and 48 or 40
@@ -586,75 +486,45 @@ local function applyLayout()
 
 	local bw = mobile and 42 or 34
 	local bh = mobile and 36 or 30
-
 	closeBtn.Size = UDim2.fromOffset(bw, bh)
 	minBtn.Size = UDim2.fromOffset(bw, bh)
-
 	closeBtn.Position = UDim2.new(1, -10, 0.5, 0)
 	minBtn.Position = UDim2.new(1, -(10 + bw + 8), 0.5, 0)
-
-	titleLabel.Size = UDim2.new(
-		1,
-		-(34 + 18 + bw * 2 + 8),
-		1,
-		0
-	)
-
+	titleLabel.Size = UDim2.new(1, -(34 + 18 + bw * 2 + 8), 1, 0)
 	topbar.Size = UDim2.new(1, 0, 0, topbarH)
 
 	toggleBtn.Size = UDim2.fromOffset(toggleSize, toggleSize)
 	toggleBtn.TextSize = mobile and 26 or 22
 
 	local size = currentWindowSize()
-
 	window.Size = UDim2.fromOffset(size.X, size.Y)
-
 	body.Position = UDim2.fromOffset(0, topbarH)
-
 	local bodyH = fullSize.Y - topbarH
-
 	body.Size = UDim2.new(1, 0, 0, bodyH)
 
 	local n = #TAB_DEFS
-
 	if mobile then
 		sideLayout.FillDirection = Enum.FillDirection.Horizontal
-
-		sidebar.Position = UDim2.fromOffset(
-			0,
-			bodyH - TAB_BAR_H
-		)
-
+		sidebar.Position = UDim2.fromOffset(0, bodyH - TAB_BAR_H)
 		sidebar.Size = UDim2.new(1, 0, 0, TAB_BAR_H)
-
 		content.Position = UDim2.fromOffset(0, 0)
 		content.Size = UDim2.new(1, 0, 0, bodyH - TAB_BAR_H)
 	else
 		sideLayout.FillDirection = Enum.FillDirection.Vertical
-
 		sidebar.Position = UDim2.fromOffset(0, 0)
 		sidebar.Size = UDim2.new(0, 128, 1, 0)
-
 		content.Position = UDim2.fromOffset(128, 0)
 		content.Size = UDim2.new(1, -128, 1, 0)
 	end
 
 	for _, def in ipairs(TAB_DEFS) do
 		local t = tabs[def.name]
-
 		if t then
 			if mobile then
-				t.btn.Size = UDim2.new(
-					1 / n,
-					-(6 * (n - 1)) / n,
-					1,
-					0
-				)
-
+				t.btn.Size = UDim2.new(1 / n, -(6 * (n - 1)) / n, 1, 0)
 				t.btn.Text = def.icon .. " " .. def.name
 				t.btn.TextXAlignment = Enum.TextXAlignment.Center
 				t.btn.TextSize = 13
-
 				t.bar.AnchorPoint = Vector2.new(0.5, 1)
 				t.bar.Position = UDim2.new(0.5, 0, 1, -3)
 			else
@@ -662,11 +532,9 @@ local function applyLayout()
 				t.btn.Text = "   " .. def.icon .. "  " .. def.name
 				t.btn.TextXAlignment = Enum.TextXAlignment.Left
 				t.btn.TextSize = 14
-
 				t.bar.AnchorPoint = Vector2.new(0, 0.5)
 				t.bar.Position = UDim2.new(0, 2, 0.5, 0)
 			end
-
 			t.bar.Size = barSize(activeTab == def.name)
 		end
 	end
@@ -674,74 +542,47 @@ local function applyLayout()
 	if not placed then
 		placed = true
 		centerWindow(false)
-
 		if mobile then
-			setTogglePos(Vector2.new(
-				s.X - toggleSize - 12,
-				s.Y * 0.35
-			))
+			setTogglePos(Vector2.new(s.X - toggleSize - 12, s.Y * 0.35))
 		else
-			setTogglePos(Vector2.new(
-				12,
-				s.Y / 2 - toggleSize / 2
-			))
+			setTogglePos(Vector2.new(12, s.Y / 2 - toggleSize / 2))
 		end
 	else
 		setWindowPos(windowPos)
 		setTogglePos(togglePos)
 	end
-
 	updateToggleVisibility()
 end
 
 ------------------------------------------------------------------------
 -- OPEN / CLOSE / MINIMIZE
 ------------------------------------------------------------------------
-
 local function setOpen(open)
 	if open == isOpen then
 		return
 	end
-
 	isOpen = open
 	updateToggleVisibility()
-
 	if currentTween then
 		currentTween:Cancel()
 	end
 
-	local rest = UDim2.fromOffset(
-		windowPos.X,
-		windowPos.Y
-	)
-
-	local shifted = UDim2.fromOffset(
-		windowPos.X,
-		windowPos.Y + 18
-	)
+	local rest = UDim2.fromOffset(windowPos.X, windowPos.Y)
+	local shifted = UDim2.fromOffset(windowPos.X, windowPos.Y + 18)
 
 	if open then
 		window.Visible = true
 		window.Position = shifted
-
-		currentTween = tween(window, 0.35, {
-			GroupTransparency = 0,
-			Position = rest
-		})
-
+		currentTween = tween(window, 0.35, { GroupTransparency = 0, Position = rest })
 		task.delay(0.6, ensureOnScreen)
 	else
 		currentTween = tween(
 			window,
 			0.22,
-			{
-				GroupTransparency = 1,
-				Position = shifted
-			},
+			{ GroupTransparency = 1, Position = shifted },
 			Enum.EasingStyle.Quad,
 			Enum.EasingDirection.In
 		)
-
 		currentTween.Completed:Once(function()
 			if not isOpen then
 				window.Visible = false
@@ -753,11 +594,8 @@ end
 local function setMinimized(state)
 	minimized = state
 	minBtn.Text = state and "+" or "–"
-
 	local size = currentWindowSize()
-
 	windowPos = clampWindowPos(windowPos, size)
-
 	tween(window, 0.35, {
 		Size = UDim2.fromOffset(size.X, size.Y),
 		Position = UDim2.fromOffset(windowPos.X, windowPos.Y),
@@ -765,53 +603,37 @@ local function setMinimized(state)
 end
 
 ------------------------------------------------------------------------
--- DRAGGING (OPTIMIZED)
+-- DRAGGING (mouse + touch)
 ------------------------------------------------------------------------
-
 local activeDrag = nil
 
--- Shared input listeners instead of creating new ones for every drag.
-
+-- Shared input listeners: only one InputChanged and one InputEnded connection
+-- are needed for both draggable elements.
 UserInputService.InputChanged:Connect(function(input)
 	local drag = activeDrag
-
 	if not drag then
 		return
 	end
-
-	if input == drag.input
-		or input.UserInputType == Enum.UserInputType.MouseMovement then
-
+	if input == drag.input or input.UserInputType == Enum.UserInputType.MouseMovement then
 		local delta = input.Position - drag.startInput
-
 		if not drag.moved and delta.Magnitude > 8 then
 			drag.moved = true
 		end
-
 		if drag.moved then
-			drag.setPos(
-				drag.startPos + Vector2.new(delta.X, delta.Y)
-			)
+			drag.setPos(drag.startPos + Vector2.new(delta.X, delta.Y))
 		end
 	end
 end)
 
 UserInputService.InputEnded:Connect(function(input)
 	local drag = activeDrag
-
 	if not drag then
 		return
 	end
-
 	local isEnd = input == drag.input
-		or (
-			drag.input.UserInputType == Enum.UserInputType.MouseButton1
-			and input.UserInputType == Enum.UserInputType.MouseButton1
-		)
-
+		or (drag.input.UserInputType == Enum.UserInputType.MouseButton1 and input.UserInputType == Enum.UserInputType.MouseButton1)
 	if isEnd then
 		activeDrag = nil
-
 		if not drag.moved and drag.onTap then
 			drag.onTap()
 		end
@@ -821,12 +643,9 @@ end)
 local function makeDraggable(handle, getPos, setPos, onTap)
 	handle.InputBegan:Connect(function(input)
 		local inputType = input.UserInputType
-
-		if inputType ~= Enum.UserInputType.MouseButton1
-			and inputType ~= Enum.UserInputType.Touch then
+		if inputType ~= Enum.UserInputType.MouseButton1 and inputType ~= Enum.UserInputType.Touch then
 			return
 		end
-
 		activeDrag = {
 			input = input,
 			startInput = input.Position,
@@ -851,7 +670,6 @@ end)
 ------------------------------------------------------------------------
 -- COMPONENTS
 ------------------------------------------------------------------------
-
 local function createPage()
 	local page = create("ScrollingFrame", {
 		Parent = content,
@@ -865,13 +683,7 @@ local function createPage()
 		ScrollBarThickness = 3,
 		ScrollBarImageColor3 = Theme.Stroke,
 	})
-
-	local layout = create("UIListLayout", {
-		Parent = page,
-		Padding = UDim.new(0, 10),
-		SortOrder = Enum.SortOrder.LayoutOrder
-	})
-
+	local layout = create("UIListLayout", { Parent = page, Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder })
 	local padding = create("UIPadding", {
 		Parent = page,
 		PaddingTop = UDim.new(0, 12),
@@ -879,18 +691,14 @@ local function createPage()
 		PaddingLeft = UDim.new(0, 12),
 		PaddingRight = UDim.new(0, 12),
 	})
-
 	table.insert(compactUpdaters, function(compact)
 		local pad = compact and 8 or 12
-
 		padding.PaddingTop = UDim.new(0, pad)
 		padding.PaddingBottom = UDim.new(0, pad)
 		padding.PaddingLeft = UDim.new(0, pad)
 		padding.PaddingRight = UDim.new(0, pad)
-
 		layout.Padding = UDim.new(0, compact and 6 or 10)
 	end)
-
 	return page
 end
 
@@ -904,12 +712,8 @@ local function createCard(parent, title, subtitle)
 		AutomaticSize = Enum.AutomaticSize.Y,
 	}, {
 		corner(10),
-		create("UIStroke", {
-			Color = Theme.Stroke,
-			Thickness = 1
-		}),
+		create("UIStroke", { Color = Theme.Stroke, Thickness = 1 }),
 	})
-
 	local padding = create("UIPadding", {
 		Parent = f,
 		PaddingTop = UDim.new(0, 12),
@@ -917,32 +721,21 @@ local function createCard(parent, title, subtitle)
 		PaddingLeft = UDim.new(0, 12),
 		PaddingRight = UDim.new(0, 12),
 	})
-
-	local layout = create("UIListLayout", {
-		Parent = f,
-		Padding = UDim.new(0, 8),
-		SortOrder = Enum.SortOrder.LayoutOrder
-	})
-
+	local layout = create("UIListLayout", { Parent = f, Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder })
 	table.insert(compactUpdaters, function(compact)
 		local pad = compact and 8 or 12
-
 		padding.PaddingTop = UDim.new(0, pad)
 		padding.PaddingBottom = UDim.new(0, pad)
 		padding.PaddingLeft = UDim.new(0, pad)
 		padding.PaddingRight = UDim.new(0, pad)
-
 		layout.Padding = UDim.new(0, compact and 5 or 8)
 	end)
-
 	if title then
 		label(f, title, 15, Theme.Text, true)
 	end
-
 	if subtitle then
 		label(f, subtitle, 13, Theme.SubText, false)
 	end
-
 	return f
 end
 
@@ -953,7 +746,6 @@ local function infoRow(parent, left, right)
 		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 22),
 	})
-
 	create("TextLabel", {
 		Parent = row,
 		BackgroundTransparency = 1,
@@ -964,7 +756,6 @@ local function infoRow(parent, left, right)
 		TextSize = 13,
 		TextXAlignment = Enum.TextXAlignment.Left,
 	})
-
 	create("TextLabel", {
 		Parent = row,
 		BackgroundTransparency = 1,
@@ -977,21 +768,13 @@ local function infoRow(parent, left, right)
 	})
 end
 
-------------------------------------------------------------------------
--- TOGGLES
-------------------------------------------------------------------------
-
 local function createToggle(parent, text, key)
 	local row = create("Frame", {
 		Parent = parent,
 		LayoutOrder = nextOrder(),
 		BackgroundTransparency = 1,
-		Size = UDim2.new(
-			1, 0, 0,
-			Settings.CompactMode and 32 or 38
-		),
+		Size = UDim2.new(1, 0, 0, Settings.CompactMode and 32 or 38),
 	})
-
 	local textLabel = create("TextLabel", {
 		Parent = row,
 		BackgroundTransparency = 1,
@@ -1002,12 +785,10 @@ local function createToggle(parent, text, key)
 		TextSize = Settings.CompactMode and 12 or 14,
 		TextXAlignment = Enum.TextXAlignment.Left,
 	})
-
 	table.insert(compactUpdaters, function(compact)
 		row.Size = UDim2.new(1, 0, 0, compact and 32 or 38)
 		textLabel.TextSize = compact and 12 or 14
 	end)
-
 	local track = create("TextButton", {
 		Parent = row,
 		AnchorPoint = Vector2.new(1, 0.5),
@@ -1017,10 +798,7 @@ local function createToggle(parent, text, key)
 		AutoButtonColor = false,
 		BorderSizePixel = 0,
 		BackgroundColor3 = Theme.Stroke,
-	}, {
-		pill()
-	})
-
+	}, { pill() })
 	local knob = create("Frame", {
 		Parent = track,
 		AnchorPoint = Vector2.new(0, 0.5),
@@ -1028,27 +806,15 @@ local function createToggle(parent, text, key)
 		Size = UDim2.fromOffset(20, 20),
 		BackgroundColor3 = Color3.new(1, 1, 1),
 		BorderSizePixel = 0,
-	}, {
-		pill()
-	})
+	}, { pill() })
 
 	local function render(animate)
 		local on = Settings[key]
-
-		local goalPos = on
-			and UDim2.new(1, -23, 0.5, 0)
-			or UDim2.new(0, 3, 0.5, 0)
-
+		local goalPos = on and UDim2.new(1, -23, 0.5, 0) or UDim2.new(0, 3, 0.5, 0)
 		local goalColor = on and Theme.Accent or Theme.Stroke
-
 		if animate then
-			tween(knob, 0.2, {
-				Position = goalPos
-			})
-
-			tween(track, 0.2, {
-				BackgroundColor3 = goalColor
-			})
+			tween(knob, 0.2, { Position = goalPos })
+			tween(track, 0.2, { BackgroundColor3 = goalColor })
 		else
 			knob.Position = goalPos
 			track.BackgroundColor3 = goalColor
@@ -1058,17 +824,14 @@ local function createToggle(parent, text, key)
 	track.MouseButton1Click:Connect(function()
 		Settings[key] = not Settings[key]
 		render(true)
-
 		if key == "CompactMode" then
 			applyCompactMode()
-
 		elseif key == "Notifications" then
 			if Settings.Notifications then
 				notify("Notifications enabled")
 			end
 		end
 	end)
-
 	onAccent(function(instant)
 		render(not instant)
 	end)
@@ -1077,68 +840,52 @@ end
 ------------------------------------------------------------------------
 -- PAGES
 ------------------------------------------------------------------------
-
 local pages = {}
 
--- HOME
+-- Home
 do
 	local page = createPage()
 	pages.Home = page
-
-	createCard(
-		page,
-		"Welcome, " .. player.DisplayName,
-		"The panel is ready. Use the Actions tab for buttons."
-	)
-
+	createCard(page, "Welcome, " .. player.DisplayName, "The panel is ready. Use the Actions tab for buttons.")
 	local info = createCard(page, "Info")
-
-	local platform = (
-		UserInputService.TouchEnabled
-		and not UserInputService.KeyboardEnabled
-	) and "Mobile" or "PC"
-
+	local platform = (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled) and "Mobile" or "PC"
 	infoRow(info, "Platform", platform)
 	infoRow(info, "Toggle key", CONFIG.ToggleKey.Name)
-	infoRow(info, "Version", "0.5")
+	infoRow(info, "Version", "0.6")
 end
 
--- ACTIONS
+-- Actions
 do
 	local page = createPage()
 	pages.Actions = page
 
 	local cycleConfig = CONFIG.TeleportCycle
 	local cycleRunning = false
+	local stopCycleRequested = false
 
 	local teleportCard = createCard(
 		page,
-		"Teleport cycle",
-		"First: 52, 3660, -2  →  Final: 114, 2056, 2  →  Die"
+		"Teleport loop",
+		"First position → Final position. The player will NOT be killed."
 	)
 
 	local tpBtn = create("TextButton", {
 		Parent = teleportCard,
 		LayoutOrder = nextOrder(),
 		Size = UDim2.new(1, 0, 0, 40),
-		Text = "Run teleport cycle",
+		Text = "Start teleport loop",
 		TextColor3 = Theme.Text,
 		Font = Enum.Font.GothamMedium,
 		TextSize = 14,
 		BorderSizePixel = 0,
-	}, {
-		corner(8)
-	})
-
-	addButtonFeedback(
-		tpBtn,
-		Theme.Elevated,
-		Theme.Stroke,
-		Theme.Surface
-	)
+	}, { corner(8) })
+	addButtonFeedback(tpBtn, Theme.Elevated, Theme.Stroke, Theme.Surface)
 
 	tpBtn.MouseButton1Click:Connect(function()
+		-- Clicking while the loop is active requests a clean stop.
 		if cycleRunning then
+			stopCycleRequested = true
+			tpBtn.Text = "Stopping..."
 			return
 		end
 
@@ -1148,79 +895,76 @@ do
 
 		if not root or not humanoid or humanoid.Health <= 0 then
 			tpBtn.Text = "Character not ready"
-
 			task.delay(1.5, function()
-				if tpBtn.Parent then
-					tpBtn.Text = "Run teleport cycle"
+				if tpBtn.Parent and not cycleRunning then
+					tpBtn.Text = "Start teleport loop"
 				end
 			end)
-
 			return
 		end
 
 		cycleRunning = true
-		tpBtn.Text = "Teleporting..."
+		stopCycleRequested = false
+		tpBtn.Text = "Stop teleport loop"
 
 		task.spawn(function()
-			-- First teleport
-			root.CFrame = CFrame.new(cycleConfig.FirstPosition)
+			local loopEnabled = cycleConfig.LoopEnabled == true
+			local configuredCount = math.floor(tonumber(cycleConfig.LoopCount) or 1)
+			local loopCount = math.max(0, configuredCount)
+			local completedCycles = 0
 
-			notify("First teleport complete")
-
-			-- Configurable wait
-			task.wait(math.max(
-				0,
-				tonumber(cycleConfig.WaitSeconds) or 1
-			))
-
-			-- Check that the character is still alive
-			if char ~= player.Character
-				or not root.Parent
-				or humanoid.Health <= 0 then
-
-				cycleRunning = false
-				return
-			end
-
-			-- Second teleport
-			root.CFrame = CFrame.new(cycleConfig.FinalPosition)
-
-			notify("Final teleport complete")
-
-			-- Die after second teleport
-			if cycleConfig.KillAfterFinalTeleport and humanoid.Health > 0 then
-				task.wait(0.15)
-
-				if char == player.Character
-					and humanoid.Parent
-					and humanoid.Health > 0 then
-
-					humanoid.Health = 0
+			while not stopCycleRequested do
+				-- Do not attach to a new character or add respawn handling.
+				if char ~= player.Character or not root.Parent or humanoid.Health <= 0 then
+					break
 				end
+
+				-- First teleport
+				root.CFrame = CFrame.new(cycleConfig.FirstPosition)
+				notify("First teleport complete")
+
+				task.wait(math.max(0, tonumber(cycleConfig.WaitSeconds) or 1))
+				if stopCycleRequested then
+					break
+				end
+
+				if char ~= player.Character or not root.Parent or humanoid.Health <= 0 then
+					break
+				end
+
+				-- Final teleport. There is deliberately no kill / damage call here.
+				root.CFrame = CFrame.new(cycleConfig.FinalPosition)
+				notify("Final teleport complete")
+				completedCycles += 1
+
+				-- Stop after one pass when looping is disabled.
+				if not loopEnabled then
+					break
+				end
+
+				-- LoopCount = 0 means unlimited repeats; click the button to stop.
+				if loopCount > 0 and completedCycles >= loopCount then
+					break
+				end
+
+				task.wait(math.max(0, tonumber(cycleConfig.LoopDelaySeconds) or 1))
 			end
 
 			cycleRunning = false
-
-			task.delay(1.5, function()
-				if tpBtn.Parent then
-					tpBtn.Text = "Run teleport cycle"
-				end
-			end)
+			stopCycleRequested = false
+			if tpBtn.Parent then
+				tpBtn.Text = "Start teleport loop"
+			end
 		end)
 	end)
 end
 
--- SETTINGS
+-- Settings
 do
 	local page = createPage()
 	pages.Settings = page
 
-	local appearance = createCard(
-		page,
-		"Appearance",
-		"Accent color"
-	)
-
+	local appearance = createCard(page, "Appearance", "Accent color")
 	local swatchRow = create("Frame", {
 		Parent = appearance,
 		LayoutOrder = nextOrder(),
@@ -1242,16 +986,13 @@ do
 		Color3.fromRGB(255, 150, 70),
 		Color3.fromRGB(255, 100, 160),
 	}
-
 	local swatches = {}
-
 	for _, color in ipairs(ACCENTS) do
 		local stroke = create("UIStroke", {
 			Color = Theme.Text,
 			Thickness = 2,
 			Transparency = (color == Theme.Accent) and 0 or 1,
 		})
-
 		local s = create("TextButton", {
 			Parent = swatchRow,
 			LayoutOrder = nextOrder(),
@@ -1260,34 +1001,21 @@ do
 			Text = "",
 			AutoButtonColor = false,
 			BorderSizePixel = 0,
-		}, {
-			pill(),
-			stroke
-		})
-
-		table.insert(swatches, {
-			color = color,
-			stroke = stroke
-		})
-
+		}, { pill(), stroke })
+		table.insert(swatches, { color = color, stroke = stroke })
 		s.MouseButton1Click:Connect(function()
 			setAccent(color)
-
 			for _, sw in ipairs(swatches) do
-				tween(sw.stroke, 0.2, {
-					Transparency = (sw.color == color) and 0 or 1
-				})
+				tween(sw.stroke, 0.2, { Transparency = (sw.color == color) and 0 or 1 })
 			end
 		end)
 	end
 
 	local prefs = createCard(page, "Preferences")
-
 	createToggle(prefs, "Notifications", "Notifications")
 	createToggle(prefs, "Compact mode", "CompactMode")
 
 	local windowCard = createCard(page, "Window")
-
 	local resetBtn = create("TextButton", {
 		Parent = windowCard,
 		LayoutOrder = nextOrder(),
@@ -1297,17 +1025,8 @@ do
 		Font = Enum.Font.GothamMedium,
 		TextSize = 14,
 		BorderSizePixel = 0,
-	}, {
-		corner(8)
-	})
-
-	addButtonFeedback(
-		resetBtn,
-		Theme.Elevated,
-		Theme.Stroke,
-		Theme.Surface
-	)
-
+	}, { corner(8) })
+	addButtonFeedback(resetBtn, Theme.Elevated, Theme.Stroke, Theme.Surface)
 	resetBtn.MouseButton1Click:Connect(function()
 		centerWindow(true)
 	end)
@@ -1318,33 +1037,22 @@ applyCompactMode()
 ------------------------------------------------------------------------
 -- TABS
 ------------------------------------------------------------------------
-
 local function selectTab(name)
 	if activeTab == name then
 		return
 	end
-
 	activeTab = name
-
 	for n, t in pairs(tabs) do
 		local on = (n == name)
-
 		tween(t.btn, 0.2, {
 			BackgroundTransparency = on and 0 or 1,
 			TextColor3 = on and Theme.Text or Theme.SubText,
 		})
-
-		tween(t.bar, 0.25, {
-			Size = barSize(on)
-		})
-
+		tween(t.bar, 0.25, { Size = barSize(on) })
 		if on then
 			t.page.Position = UDim2.fromOffset(14, 0)
 			t.page.Visible = true
-
-			tween(t.page, 0.3, {
-				Position = UDim2.fromOffset(0, 0)
-			})
+			tween(t.page, 0.3, { Position = UDim2.fromOffset(0, 0) })
 		else
 			t.page.Visible = false
 		end
@@ -1365,9 +1073,7 @@ for _, def in ipairs(TAB_DEFS) do
 		TextColor3 = Theme.SubText,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		Text = "",
-	}, {
-		corner(8)
-	})
+	}, { corner(8) })
 
 	local bar = create("Frame", {
 		Parent = btn,
@@ -1375,34 +1081,21 @@ for _, def in ipairs(TAB_DEFS) do
 		Position = UDim2.new(0, 2, 0.5, 0),
 		Size = UDim2.fromOffset(3, 0),
 		BorderSizePixel = 0,
-	}, {
-		pill()
-	})
-
+	}, { pill() })
 	trackAccent(bar, "BackgroundColor3")
 
-	tabs[def.name] = {
-		btn = btn,
-		bar = bar,
-		page = pages[def.name]
-	}
+	tabs[def.name] = { btn = btn, bar = bar, page = pages[def.name] }
 
 	btn.MouseEnter:Connect(function()
 		if activeTab ~= def.name then
-			tween(btn, 0.15, {
-				BackgroundTransparency = 0.5
-			})
+			tween(btn, 0.15, { BackgroundTransparency = 0.5 })
 		end
 	end)
-
 	btn.MouseLeave:Connect(function()
 		if activeTab ~= def.name then
-			tween(btn, 0.15, {
-				BackgroundTransparency = 1
-			})
+			tween(btn, 0.15, { BackgroundTransparency = 1 })
 		end
 	end)
-
 	btn.MouseButton1Click:Connect(function()
 		selectTab(def.name)
 	end)
@@ -1411,7 +1104,6 @@ end
 ------------------------------------------------------------------------
 -- WIRE UP + START
 ------------------------------------------------------------------------
-
 closeBtn.MouseButton1Click:Connect(function()
 	setOpen(false)
 end)
@@ -1424,22 +1116,18 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then
 		return
 	end
-
 	if input.KeyCode == CONFIG.ToggleKey then
 		setOpen(not isOpen)
 	end
 end)
 
 local waited = 0
-
 while gui.AbsoluteSize.X < 10 and waited < 2 do
 	waited += task.wait()
 end
 
 applyLayout()
-
 gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(applyLayout)
-
 selectTab("Home")
 setOpen(true)
 
@@ -1454,7 +1142,6 @@ if debugLabel then
 	task.spawn(function()
 		while gui.Parent do
 			local gs = gui.AbsoluteSize
-
 			debugLabel.Text = string.format(
 				"mode:%s touch:%s kb:%s\ngui:%.0fx%.0f  win:%.0f,%.0f %.0fx%.0f\nvisible:%s open:%s",
 				mobile and "MOBILE" or "PC",
@@ -1469,7 +1156,6 @@ if debugLabel then
 				tostring(window.Visible),
 				tostring(isOpen)
 			)
-
 			task.wait(0.5)
 		end
 	end)
@@ -1478,7 +1164,6 @@ end
 end -- main
 
 local ok, err = xpcall(main, debug.traceback)
-
 if not ok then
 	warn("[AdminPanelUI] " .. tostring(err))
 	showFatal(err)
