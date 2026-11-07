@@ -1,12 +1,12 @@
 --[[
-	AdminPanelUI v0.4 (LocalScript)
+	AdminPanelUI v0.5 (LocalScript)
 	Put in: StarterPlayer > StarterPlayerScripts
 
 	- PC / mobile layout
-	- Teleport cycle
-	- Drag, minimize, close
+	- Manual two-stage teleport cycle
+	- Drag, minimize, close, floating toggle button
 	- Compact mode and notifications
-	- Shared drag input connections
+	- Optimized dragging
 ]]
 
 local Players = game:GetService("Players")
@@ -72,11 +72,9 @@ local Theme = {
 local Settings = {
 	Notifications = true,
 	CompactMode = false,
-	AutoTeleport = false,
 }
 
 local compactUpdaters = {}
-local autoTeleportHandler = nil
 
 local function applyCompactMode()
 	for _, update in ipairs(compactUpdaters) do
@@ -132,6 +130,7 @@ local function tween(obj, duration, props, style, direction)
 		),
 		props
 	)
+
 	t:Play()
 	return t
 end
@@ -250,6 +249,7 @@ end
 ------------------------------------------------------------------------
 
 local old = playerGui:FindFirstChild("AdminPanelUI")
+
 if old then
 	old:Destroy()
 end
@@ -345,6 +345,7 @@ local function topButton(text, hover, press)
 end
 
 local minBtn = topButton("–", Theme.Stroke, Theme.Surface)
+
 local closeBtn = topButton(
 	"×",
 	Color3.fromRGB(205, 72, 84),
@@ -462,6 +463,7 @@ local function getScreen()
 
 	if s.X < 10 or s.Y < 10 then
 		local cam = workspace.CurrentCamera
+
 		if cam then
 			s = cam.ViewportSize
 		end
@@ -490,7 +492,11 @@ end
 
 local function setWindowPos(pos)
 	windowPos = clampWindowPos(pos, currentWindowSize())
-	window.Position = UDim2.fromOffset(windowPos.X, windowPos.Y)
+
+	window.Position = UDim2.fromOffset(
+		windowPos.X,
+		windowPos.Y
+	)
 end
 
 local function setTogglePos(pos)
@@ -501,7 +507,10 @@ local function setTogglePos(pos)
 		math.clamp(pos.Y, TOP_SAFE, math.max(TOP_SAFE, s.Y - toggleSize))
 	)
 
-	toggleBtn.Position = UDim2.fromOffset(togglePos.X, togglePos.Y)
+	toggleBtn.Position = UDim2.fromOffset(
+		togglePos.X,
+		togglePos.Y
+	)
 end
 
 local function centerWindow(animate)
@@ -509,7 +518,11 @@ local function centerWindow(animate)
 	local size = currentWindowSize()
 
 	windowPos = clampWindowPos((s - size) / 2, size)
-	local goal = UDim2.fromOffset(windowPos.X, windowPos.Y)
+
+	local goal = UDim2.fromOffset(
+		windowPos.X,
+		windowPos.Y
+	)
 
 	if animate then
 		tween(window, 0.4, {
@@ -526,6 +539,7 @@ local function ensureOnScreen()
 	end
 
 	local gs = gui.AbsoluteSize
+
 	if gs.X < 10 then
 		return
 	end
@@ -537,6 +551,7 @@ local function ensureOnScreen()
 	if p.X < -tol or p.Y < -tol
 		or p.X + sz.X > gs.X + tol
 		or p.Y + sz.Y > gs.Y + tol then
+
 		centerWindow(true)
 	end
 end
@@ -591,25 +606,35 @@ local function applyLayout()
 	toggleBtn.TextSize = mobile and 26 or 22
 
 	local size = currentWindowSize()
+
 	window.Size = UDim2.fromOffset(size.X, size.Y)
 
 	body.Position = UDim2.fromOffset(0, topbarH)
 
 	local bodyH = fullSize.Y - topbarH
+
 	body.Size = UDim2.new(1, 0, 0, bodyH)
 
 	local n = #TAB_DEFS
 
 	if mobile then
 		sideLayout.FillDirection = Enum.FillDirection.Horizontal
-		sidebar.Position = UDim2.fromOffset(0, bodyH - TAB_BAR_H)
+
+		sidebar.Position = UDim2.fromOffset(
+			0,
+			bodyH - TAB_BAR_H
+		)
+
 		sidebar.Size = UDim2.new(1, 0, 0, TAB_BAR_H)
+
 		content.Position = UDim2.fromOffset(0, 0)
 		content.Size = UDim2.new(1, 0, 0, bodyH - TAB_BAR_H)
 	else
 		sideLayout.FillDirection = Enum.FillDirection.Vertical
+
 		sidebar.Position = UDim2.fromOffset(0, 0)
 		sidebar.Size = UDim2.new(0, 128, 1, 0)
+
 		content.Position = UDim2.fromOffset(128, 0)
 		content.Size = UDim2.new(1, -128, 1, 0)
 	end
@@ -651,9 +676,15 @@ local function applyLayout()
 		centerWindow(false)
 
 		if mobile then
-			setTogglePos(Vector2.new(s.X - toggleSize - 12, s.Y * 0.35))
+			setTogglePos(Vector2.new(
+				s.X - toggleSize - 12,
+				s.Y * 0.35
+			))
 		else
-			setTogglePos(Vector2.new(12, s.Y / 2 - toggleSize / 2))
+			setTogglePos(Vector2.new(
+				12,
+				s.Y / 2 - toggleSize / 2
+			))
 		end
 	else
 		setWindowPos(windowPos)
@@ -679,8 +710,15 @@ local function setOpen(open)
 		currentTween:Cancel()
 	end
 
-	local rest = UDim2.fromOffset(windowPos.X, windowPos.Y)
-	local shifted = UDim2.fromOffset(windowPos.X, windowPos.Y + 18)
+	local rest = UDim2.fromOffset(
+		windowPos.X,
+		windowPos.Y
+	)
+
+	local shifted = UDim2.fromOffset(
+		windowPos.X,
+		windowPos.Y + 18
+	)
 
 	if open then
 		window.Visible = true
@@ -717,6 +755,7 @@ local function setMinimized(state)
 	minBtn.Text = state and "+" or "–"
 
 	local size = currentWindowSize()
+
 	windowPos = clampWindowPos(windowPos, size)
 
 	tween(window, 0.35, {
@@ -731,7 +770,8 @@ end
 
 local activeDrag = nil
 
--- Shared input listeners: only one InputChanged and one InputEnded connection.
+-- Shared input listeners instead of creating new ones for every drag.
+
 UserInputService.InputChanged:Connect(function(input)
 	local drag = activeDrag
 
@@ -937,6 +977,10 @@ local function infoRow(parent, left, right)
 	})
 end
 
+------------------------------------------------------------------------
+-- TOGGLES
+------------------------------------------------------------------------
+
 local function createToggle(parent, text, key)
 	local row = create("Frame", {
 		Parent = parent,
@@ -1022,9 +1066,6 @@ local function createToggle(parent, text, key)
 			if Settings.Notifications then
 				notify("Notifications enabled")
 			end
-
-		elseif key == "AutoTeleport" and autoTeleportHandler then
-			autoTeleportHandler(Settings.AutoTeleport)
 		end
 	end)
 
@@ -1059,7 +1100,7 @@ do
 
 	infoRow(info, "Platform", platform)
 	infoRow(info, "Toggle key", CONFIG.ToggleKey.Name)
-	infoRow(info, "Version", "0.4")
+	infoRow(info, "Version", "0.5")
 end
 
 -- ACTIONS
@@ -1068,86 +1109,12 @@ do
 	pages.Actions = page
 
 	local cycleConfig = CONFIG.TeleportCycle
-	local cycleToken = 0
-
-	local function runTeleportCycle(char, automatic)
-		if automatic and not Settings.AutoTeleport then
-			return
-		end
-
-		cycleToken += 1
-		local thisToken = cycleToken
-
-		char = char or player.Character
-
-		if not char then
-			return false, "Character not ready"
-		end
-
-		task.spawn(function()
-			local root = char:WaitForChild("HumanoidRootPart", 8)
-
-			local humanoid = char:FindFirstChildOfClass("Humanoid")
-				or char:WaitForChild("Humanoid", 5)
-
-			if not root or not humanoid
-				or thisToken ~= cycleToken
-				or char ~= player.Character then
-				return
-			end
-
-			if automatic and not Settings.AutoTeleport then
-				return
-			end
-
-			root.CFrame = CFrame.new(cycleConfig.FirstPosition)
-			notify("Teleported to the first position")
-
-			task.wait(math.max(
-				0,
-				tonumber(cycleConfig.WaitSeconds) or 1
-			))
-
-			if thisToken ~= cycleToken
-				or char ~= player.Character
-				or not root.Parent then
-				return
-			end
-
-			if automatic and not Settings.AutoTeleport then
-				return
-			end
-
-			root.CFrame = CFrame.new(cycleConfig.FinalPosition)
-			notify("Teleported to the final position")
-
-			if cycleConfig.KillAfterFinalTeleport and humanoid.Health > 0 then
-				task.wait(0.15)
-
-				if thisToken == cycleToken
-					and char == player.Character
-					and humanoid.Parent then
-
-					humanoid.Health = 0
-				end
-			end
-		end)
-
-		return true
-	end
-
-	autoTeleportHandler = function(enabled)
-		if enabled then
-			runTeleportCycle(player.Character, true)
-		else
-			cycleToken += 1
-		end
-	end
+	local cycleRunning = false
 
 	local teleportCard = createCard(
 		page,
 		"Teleport cycle",
-		"First: 52, 3660, -2  →  Final: 114, 2056, 2  →  Respawn"
+		"First: 52, 3660, -2  →  Final: 114, 2056, 2  →  Die"
 	)
 
 	local tpBtn = create("TextButton", {
@@ -1171,35 +1138,76 @@ do
 	)
 
 	tpBtn.MouseButton1Click:Connect(function()
-		local ok = runTeleportCycle(player.Character, false)
+		if cycleRunning then
+			return
+		end
 
-		tpBtn.Text = ok and "Cycle started" or "Character not ready"
+		local char = player.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		local humanoid = char and char:FindFirstChildOfClass("Humanoid")
 
-		task.delay(1.5, function()
-			if tpBtn.Parent then
-				tpBtn.Text = "Run teleport cycle"
+		if not root or not humanoid or humanoid.Health <= 0 then
+			tpBtn.Text = "Character not ready"
+
+			task.delay(1.5, function()
+				if tpBtn.Parent then
+					tpBtn.Text = "Run teleport cycle"
+				end
+			end)
+
+			return
+		end
+
+		cycleRunning = true
+		tpBtn.Text = "Teleporting..."
+
+		task.spawn(function()
+			-- First teleport
+			root.CFrame = CFrame.new(cycleConfig.FirstPosition)
+
+			notify("First teleport complete")
+
+			-- Configurable wait
+			task.wait(math.max(
+				0,
+				tonumber(cycleConfig.WaitSeconds) or 1
+			))
+
+			-- Check that the character is still alive
+			if char ~= player.Character
+				or not root.Parent
+				or humanoid.Health <= 0 then
+
+				cycleRunning = false
+				return
 			end
+
+			-- Second teleport
+			root.CFrame = CFrame.new(cycleConfig.FinalPosition)
+
+			notify("Final teleport complete")
+
+			-- Die after second teleport
+			if cycleConfig.KillAfterFinalTeleport and humanoid.Health > 0 then
+				task.wait(0.15)
+
+				if char == player.Character
+					and humanoid.Parent
+					and humanoid.Health > 0 then
+
+					humanoid.Health = 0
+				end
+			end
+
+			cycleRunning = false
+
+			task.delay(1.5, function()
+				if tpBtn.Parent then
+					tpBtn.Text = "Run teleport cycle"
+				end
+			end)
 		end)
 	end)
-
-	local autoCard = createCard(
-		page,
-		"Automatic cycle",
-		"When enabled, the cycle repeats after every respawn."
-	)
-
-	createToggle(autoCard, "Repeat cycle on respawn", "AutoTeleport")
-
-	player.CharacterAdded:Connect(function(char)
-		if Settings.AutoTeleport then
-			task.wait(0.2)
-			runTeleportCycle(char, true)
-		end
-	end)
-
-	if player.Character and Settings.AutoTeleport then
-		task.defer(runTeleportCycle, player.Character, true)
-	end
 end
 
 -- SETTINGS
@@ -1207,7 +1215,11 @@ do
 	local page = createPage()
 	pages.Settings = page
 
-	local appearance = createCard(page, "Appearance", "Accent color")
+	local appearance = createCard(
+		page,
+		"Appearance",
+		"Accent color"
+	)
 
 	local swatchRow = create("Frame", {
 		Parent = appearance,
