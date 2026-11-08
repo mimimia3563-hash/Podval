@@ -1,9 +1,10 @@
 --[[
-	AdminPanelUI v0.7  (LocalScript)
+	AdminPanelUI v0.8  (LocalScript)
 	Put in: StarterPlayer > StarterPlayerScripts
 
 	- One script, auto PC / mobile layout
 	- Actions tab: configurable, stoppable teleport loop
+	- Move tab: Speed / Fly / Noclip quick bar (fly works on phone)
 	- Drag, minimize, close, floating toggle button
 	- Debug box + on-screen error box
 ]]
@@ -96,6 +97,7 @@ end
 local TAB_DEFS = {
 	{ name = "Home", icon = "🏠" },
 	{ name = "Actions", icon = "⚡" },
+	{ name = "Move", icon = "🏃" },
 	{ name = "Settings", icon = "⚙️" },
 }
 
@@ -524,7 +526,7 @@ local function applyLayout()
 				t.btn.Size = UDim2.new(1 / n, -(6 * (n - 1)) / n, 1, 0)
 				t.btn.Text = def.icon .. " " .. def.name
 				t.btn.TextXAlignment = Enum.TextXAlignment.Center
-				t.btn.TextSize = 13
+				t.btn.TextSize = n > 3 and 12 or 13
 				t.bar.AnchorPoint = Vector2.new(0.5, 1)
 				t.bar.Position = UDim2.new(0.5, 0, 1, -3)
 			else
@@ -846,12 +848,12 @@ local pages = {}
 do
 	local page = createPage()
 	pages.Home = page
-	createCard(page, "Welcome, " .. player.DisplayName, "The panel is ready. Use the Actions tab for buttons.")
+	createCard(page, "Welcome, " .. player.DisplayName, "The panel is ready. Use the Actions and Move tabs for buttons.")
 	local info = createCard(page, "Info")
 	local platform = (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled) and "Mobile" or "PC"
 	infoRow(info, "Platform", platform)
 	infoRow(info, "Toggle key", CONFIG.ToggleKey.Name)
-	infoRow(info, "Version", "0.7")
+	infoRow(info, "Version", "0.8")
 end
 
 -- Actions
@@ -988,6 +990,323 @@ do
 				tpBtn.Text = "Start teleport loop"
 			end
 		end)
+	end)
+end
+
+-- Move (speed / fly / noclip)
+do
+	local RunService = game:GetService("RunService")
+	local page = createPage()
+	pages.Move = page
+
+	local state = { Speed = false, Fly = false, Noclip = false }
+	local values = { WalkSpeed = 50, FlySpeed = 60 }
+	local flyUp, flyDown = false, false
+	local flyBV, flyBG = nil, nil
+	local savedWalkSpeed = nil
+	local noclipOriginal = {}
+	local quick = {}
+	local setState -- assigned below (the fly pad's OFF button needs it)
+
+	-- On-screen fly controls for touch devices: ▼  ▲  ✕(fly off)
+	-- Sits at the bottom right, just left of Roblox's jump button.
+	-- The jump button itself also works as "up" while flying.
+	local flyPad = create("Frame", {
+		Name = "FlyPad",
+		Parent = gui,
+		Visible = false,
+		AnchorPoint = Vector2.new(1, 1),
+		Position = UDim2.new(1, -130, 1, -24),
+		Size = UDim2.fromOffset(172, 52),
+		BackgroundTransparency = 1,
+		ZIndex = 6,
+	}, {
+		create("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			Padding = UDim.new(0, 8),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+
+	local function padButton(text, order, setter, isHold, color)
+		local b = create("TextButton", {
+			Parent = flyPad,
+			LayoutOrder = order,
+			Size = UDim2.fromOffset(52, 52),
+			Text = text,
+			TextSize = 22,
+			Font = Enum.Font.GothamBold,
+			TextColor3 = Theme.Text,
+			AutoButtonColor = false,
+			BorderSizePixel = 0,
+			BackgroundTransparency = 0.1,
+			ZIndex = 6,
+		}, {
+			pill(),
+			create("UIStroke", { Color = Theme.Text, Thickness = 1, Transparency = 0.7 }),
+		})
+		if color then
+			b.BackgroundColor3 = color
+		else
+			trackAccent(b, "BackgroundColor3")
+		end
+		b.InputBegan:Connect(function(input)
+			local t = input.UserInputType
+			if t ~= Enum.UserInputType.MouseButton1 and t ~= Enum.UserInputType.Touch then
+				return
+			end
+			if isHold then
+				setter(true)
+				local conn
+				conn = input.Changed:Connect(function()
+					if input.UserInputState == Enum.UserInputState.End then
+						setter(false)
+						conn:Disconnect()
+					end
+				end)
+			else
+				setter()
+			end
+		end)
+		return b
+	end
+
+	padButton("▼", 1, function(v)
+		flyDown = v
+	end, true)
+	padButton("▲", 2, function(v)
+		flyUp = v
+	end, true)
+	padButton("✕", 3, function()
+		setState("Fly", false)
+	end, false, Color3.fromRGB(205, 72, 84))
+
+	-- Quick bar
+	local barCard = createCard(
+		page,
+		"Quick bar",
+		"Tap to toggle. Fly on PC: WASD to move, Space/E up, Q down. Fly on phone: thumbstick to move, ▲ ▼ or the jump button for up/down, ✕ to stop."
+	)
+	local barRow = create("Frame", {
+		Parent = barCard,
+		LayoutOrder = nextOrder(),
+		BackgroundTransparency = 1,
+		Size = UDim2.new(1, 0, 0, 44),
+	}, {
+		create("UIListLayout", {
+			FillDirection = Enum.FillDirection.Horizontal,
+			Padding = UDim.new(0, 8),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}),
+	})
+
+	local function renderQuick(name)
+		local b = quick[name]
+		if not b then
+			return
+		end
+		local on = state[name]
+		b.Text = on and (name .. " ✓") or name
+		tween(b, 0.2, { BackgroundColor3 = on and Theme.Accent or Theme.Elevated })
+	end
+
+	setState = function(name, value)
+		state[name] = value
+		renderQuick(name)
+		if name == "Fly" then
+			flyUp, flyDown = false, false
+			flyPad.Visible = value and UserInputService.TouchEnabled
+			-- On phones the panel covers the screen, so close it while flying.
+			-- Tap the 🛠 button to reopen it, or the ✕ pad button to stop flying.
+			if value and mobile then
+				setOpen(false)
+			end
+		end
+		notify(name .. (value and " enabled" or " disabled"))
+	end
+
+	for _, name in ipairs({ "Speed", "Fly", "Noclip" }) do
+		local b = create("TextButton", {
+			Parent = barRow,
+			LayoutOrder = nextOrder(),
+			Size = UDim2.new(1 / 3, -6, 1, 0),
+			Text = name,
+			TextColor3 = Theme.Text,
+			Font = Enum.Font.GothamMedium,
+			TextSize = 14,
+			AutoButtonColor = false,
+			BackgroundColor3 = Theme.Elevated,
+			BorderSizePixel = 0,
+		}, { corner(8) })
+		quick[name] = b
+		b.MouseButton1Click:Connect(function()
+			setState(name, not state[name])
+		end)
+	end
+	onAccent(function()
+		for name in pairs(quick) do
+			renderQuick(name)
+		end
+	end)
+
+	-- Values
+	local valuesCard = createCard(page, "Values")
+	local function numberRow(text, key, min, max)
+		local row = create("Frame", {
+			Parent = valuesCard,
+			LayoutOrder = nextOrder(),
+			BackgroundTransparency = 1,
+			Size = UDim2.new(1, 0, 0, 36),
+		})
+		create("TextLabel", {
+			Parent = row,
+			BackgroundTransparency = 1,
+			Size = UDim2.new(1, -90, 1, 0),
+			Text = text,
+			TextColor3 = Theme.Text,
+			Font = Enum.Font.Gotham,
+			TextSize = 14,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		})
+		local box = create("TextBox", {
+			Parent = row,
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, 0, 0.5, 0),
+			Size = UDim2.fromOffset(80, 32),
+			BackgroundColor3 = Theme.Elevated,
+			BorderSizePixel = 0,
+			ClearTextOnFocus = false,
+			Text = tostring(values[key]),
+			TextColor3 = Theme.Text,
+			Font = Enum.Font.GothamMedium,
+			TextSize = 14,
+		}, { corner(8) })
+		box.FocusLost:Connect(function()
+			local n = tonumber(box.Text)
+			if n then
+				values[key] = math.clamp(n, min, max)
+			end
+			box.Text = tostring(values[key])
+		end)
+	end
+	numberRow("Walk speed", "WalkSpeed", 1, 500)
+	numberRow("Fly speed", "FlySpeed", 1, 500)
+
+	-- Keyboard up/down for fly (ignored while typing in a box)
+	UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if gameProcessed then
+			return
+		end
+		local k = input.KeyCode
+		if k == Enum.KeyCode.Space or k == Enum.KeyCode.E then
+			flyUp = true
+		elseif k == Enum.KeyCode.Q or k == Enum.KeyCode.LeftControl then
+			flyDown = true
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		local k = input.KeyCode
+		if k == Enum.KeyCode.Space or k == Enum.KeyCode.E then
+			flyUp = false
+		elseif k == Enum.KeyCode.Q or k == Enum.KeyCode.LeftControl then
+			flyDown = false
+		end
+	end)
+
+	local function clearFly(hum)
+		if flyBV then
+			flyBV:Destroy()
+			flyBV = nil
+		end
+		if flyBG then
+			flyBG:Destroy()
+			flyBG = nil
+		end
+		if hum then
+			hum.AutoRotate = true
+		end
+	end
+
+	-- Speed + Fly (runs every frame, survives respawns)
+	RunService.Heartbeat:Connect(function()
+		local char = player.Character
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+
+		-- Speed
+		if state.Speed then
+			if hum then
+				if savedWalkSpeed == nil then
+					savedWalkSpeed = hum.WalkSpeed
+				end
+				hum.WalkSpeed = values.WalkSpeed
+			end
+		elseif savedWalkSpeed ~= nil and hum then
+			hum.WalkSpeed = savedWalkSpeed
+			savedWalkSpeed = nil
+		end
+
+		-- Fly
+		if state.Fly and hum and root and hum.Health > 0 then
+			if not flyBV or flyBV.Parent ~= root then
+				clearFly(nil)
+				flyBV = Instance.new("BodyVelocity")
+				flyBV.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+				flyBV.Velocity = Vector3.zero
+				flyBV.Parent = root
+				flyBG = Instance.new("BodyGyro")
+				flyBG.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+				flyBG.P = 9e4
+				flyBG.CFrame = root.CFrame
+				flyBG.Parent = root
+			end
+			hum.AutoRotate = false
+
+			local cf = workspace.CurrentCamera.CFrame
+			local look, right = cf.LookVector, cf.RightVector
+			local flat = Vector3.new(look.X, 0, look.Z)
+			local flatUnit = flat.Magnitude > 0.001 and flat.Unit or nil
+			local md = hum.MoveDirection
+
+			local dir = Vector3.zero
+			if flatUnit and md.Magnitude > 0 then
+				dir = look * md:Dot(flatUnit) + right * md:Dot(right)
+			end
+			-- hum.Jump is true while the phone's jump button (or Space) is held
+			local up = flyUp or hum.Jump
+			dir += Vector3.new(0, (up and 1 or 0) - (flyDown and 1 or 0), 0)
+			if dir.Magnitude > 1 then
+				dir = dir.Unit
+			end
+			flyBV.Velocity = dir * values.FlySpeed
+			if flatUnit then
+				flyBG.CFrame = CFrame.lookAt(root.Position, root.Position + flatUnit)
+			end
+		elseif flyBV or flyBG then
+			clearFly(hum)
+		end
+	end)
+
+	-- Noclip (physics step, restores original collisions when turned off)
+	RunService.Stepped:Connect(function()
+		local char = player.Character
+		if state.Noclip and char then
+			for _, part in ipairs(char:GetDescendants()) do
+				if part:IsA("BasePart") then
+					if noclipOriginal[part] == nil then
+						noclipOriginal[part] = part.CanCollide
+					end
+					part.CanCollide = false
+				end
+			end
+		elseif next(noclipOriginal) ~= nil then
+			for part, original in pairs(noclipOriginal) do
+				if part.Parent then
+					part.CanCollide = original
+				end
+			end
+			table.clear(noclipOriginal)
+		end
 	end)
 end
 
