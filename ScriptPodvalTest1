@@ -62,7 +62,6 @@ local CONFIG = {
 		CheckExisting = true, -- also go to matching items that already exist when you press Start
 		StaySeconds = 0.5, -- how long to stay at an item before returning
 		Offset = Vector3.new(0, 0, 0), -- add height (e.g. 0, 3, 0) if you get stuck inside an item
-		ReturnAfterRandom = true, -- random Gem button: true = go back to your position afterwards, false = stay
 	},
 }
 
@@ -1179,20 +1178,9 @@ do
 		local gem = gems[math.random(1, #gems)]
 		local cf = resolveTarget(gem)
 		if cf and gem.Parent then
-			local origin = root.CFrame
 			itemStatus.Text = "Status: teleported to " .. gem.Name .. " (random of " .. #gems .. ")"
 			teleportRoot(root, cf + itemConfig.Offset)
 			notify("Teleported to " .. gem.Name)
-
-			if itemConfig.ReturnAfterRandom then
-				task.wait(math.max(0, tonumber(itemConfig.StaySeconds) or 0.5))
-				local root2, char2 = getLivingRoot()
-				if root2 and char2 == char then
-					teleportRoot(root2, origin)
-					itemStatus.Text = "Status: returned to your position"
-					notify("Returned to your position")
-				end
-			end
 		else
 			itemStatus.Text = "Status: that Gem disappeared, try again"
 		end
