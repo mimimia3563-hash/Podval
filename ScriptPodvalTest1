@@ -1,9 +1,9 @@
 --[[
-	AdminPanelUI v0.9  (LocalScript)
+	AdminPanelUI v0.10  (LocalScript)
 	Put in: StarterPlayer > StarterPlayerScripts
 
 	- One script, auto PC / mobile layout
-	- Actions tab: configurable, stoppable teleport loop
+	- Actions tab: configurable, stoppable teleport loop + item watcher
 	- Move tab: Speed / Fly / Noclip / ESP quick bar (fly works on phone)
 	- Drag, minimize, close, floating toggle button
 	- Debug box + on-screen error box
@@ -56,6 +56,12 @@ local CONFIG = {
 		LoopEnabled = true, -- true = repeat; false = run only once
 		LoopCount = 0, -- 0 = repeat forever until you press Stop
 		LoopDelaySeconds = 1, -- Delay between completed cycles
+	},
+	ItemTeleport = {
+		Names = { "Isumrud_Sapfir", "Isumrud_Gold", "Isumrud_Blue", "Isumrud_Ametist" },
+		CheckExisting = true, -- also go to matching items that already exist when you press Start
+		StaySeconds = 0.5, -- how long to stay at an item before returning
+		Offset = Vector3.new(0, 0, 0), -- add height (e.g. 0, 3, 0) if you get stuck inside an item
 	},
 }
 
@@ -853,7 +859,7 @@ do
 	local platform = (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled) and "Mobile" or "PC"
 	infoRow(info, "Platform", platform)
 	infoRow(info, "Toggle key", CONFIG.ToggleKey.Name)
-	infoRow(info, "Version", "0.9")
+	infoRow(info, "Version", "0.10")
 end
 
 -- Actions
@@ -990,6 +996,168 @@ do
 				tpBtn.Text = "Start teleport loop"
 			end
 		end)
+	end)
+
+	-- Item watcher: teleport to special items when they spawn, then go back
+	local itemConfig = CONFIG.ItemTeleport
+	local itemNames = {}
+	for _, n in ipairs(itemConfig.Names) do
+		itemNames[n] = true
+	end
+
+	local itemCard = createCard(
+		page,
+		"Item teleport",
+		"Watches for: " .. table.concat(itemConfig.Names, ", ") .. ". When one spawns you teleport to it, then back to where you were."
+	)
+	local itemBtn = create("TextButton", {
+		Parent = itemCard,
+		LayoutOrder = nextOrder(),
+		Size = UDim2.new(1, 0, 0, 40),
+		Text = "Start item watcher",
+		TextColor3 = Theme.Text,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 14,
+		BorderSizePixel = 0,
+	}, { corner(8) })
+	addButtonFeedback(itemBtn, Theme.Elevated, Theme.Stroke, Theme.Surface)
+	local itemStatus = label(itemCard, "Status: off", 13, Theme.SubText, false)
+
+	local watching = false
+	local watchConn = nil
+	local queue = {}
+	local processing = false
+	local seen = setmetatable({}, { __mode = "k" })
+
+	-- Works for parts, meshes, models, attachments, or anything containing a part
+	local function resolveTarget(inst)
+		if inst:IsA("BasePart") then
+			return inst.CFrame
+		end
+		if inst:IsA("Attachment") then
+			return inst.WorldCFrame
+		end
+		if inst:IsA("Model") then
+			if inst:FindFirstChildWhichIsA("BasePart", true) then
+				return inst:GetPivot()
+			end
+			return nil -- model has no parts yet (still loading)
+		end
+		local part = inst:FindFirstChildWhichIsA("BasePart", true)
+		return part and part.CFrame or nil
+	end
+
+	-- New items often get their parts a moment after they appear, so retry briefly
+	local function waitForTarget(inst)
+		for _ = 1, 10 do
+			if not inst.Parent then
+				return nil
+			end
+			local cf = resolveTarget(inst)
+			if cf then
+				return cf
+			end
+			task.wait(0.1)
+		end
+		return nil
+	end
+
+	local function getLivingRoot()
+		local char = player.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if root and hum and hum.Health > 0 then
+			return root, char
+		end
+		return nil, nil
+	end
+
+	local function teleportRoot(root, cf)
+		root.CFrame = cf
+		root.AssemblyLinearVelocity = Vector3.zero
+		root.AssemblyAngularVelocity = Vector3.zero
+	end
+
+	local function processQueue()
+		if processing then
+			return
+		end
+		processing = true
+		task.spawn(function()
+			local origin, originChar = nil, nil
+
+			while watching and #queue > 0 do
+				local item = table.remove(queue, 1)
+				local cf = waitForTarget(item)
+				local root, char = getLivingRoot()
+				if cf and root and item.Parent then
+					-- Remember where we were before the first teleport of this batch
+					if not origin or originChar ~= char then
+						origin, originChar = root.CFrame, char
+					end
+					itemStatus.Text = "Status: teleported to " .. item.Name
+					teleportRoot(root, cf + itemConfig.Offset)
+					notify("Teleported to " .. item.Name)
+					task.wait(math.max(0, tonumber(itemConfig.StaySeconds) or 0.5))
+				end
+			end
+
+			-- Queue is empty (or watcher stopped): go back to the saved position
+			if origin then
+				local root, char = getLivingRoot()
+				if root and char == originChar then
+					teleportRoot(root, origin)
+					itemStatus.Text = watching and "Status: returned, watching..." or "Status: off"
+					notify("Returned to your position")
+				end
+			end
+
+			processing = false
+			-- an item may have arrived while we were returning
+			if watching and #queue > 0 then
+				processQueue()
+			end
+		end)
+	end
+
+	local function onInstance(inst)
+		if not watching or not itemNames[inst.Name] or seen[inst] then
+			return
+		end
+		-- ignore a same-named child of an item we already track
+		if inst.Parent and itemNames[inst.Parent.Name] then
+			return
+		end
+		seen[inst] = true
+		table.insert(queue, inst)
+		itemStatus.Text = "Status: found " .. inst.Name
+		processQueue()
+	end
+
+	itemBtn.MouseButton1Click:Connect(function()
+		watching = not watching
+		if watching then
+			itemBtn.Text = "Stop item watcher ✓"
+			itemStatus.Text = "Status: watching..."
+			table.clear(seen)
+			table.clear(queue)
+			watchConn = workspace.DescendantAdded:Connect(onInstance)
+			if itemConfig.CheckExisting then
+				for _, inst in ipairs(workspace:GetDescendants()) do
+					onInstance(inst)
+				end
+			end
+			notify("Item watcher started")
+		else
+			itemBtn.Text = "Start item watcher"
+			itemStatus.Text = "Status: off"
+			if watchConn then
+				watchConn:Disconnect()
+				watchConn = nil
+			end
+			table.clear(queue)
+			notify("Item watcher stopped")
+		end
 	end)
 end
 
