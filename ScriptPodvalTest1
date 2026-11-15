@@ -1,10 +1,10 @@
 --[[
-	AdminPanelUI v0.12  (LocalScript)
+	AdminPanelUI v0.13  (LocalScript)
 	Put in: StarterPlayer > StarterPlayerScripts
 
 	- One script, auto PC / mobile layout
 	- Actions tab: configurable, stoppable teleport loop + Gems (watcher + random teleport) + coordinates teleport
-	- Move tab: Speed / Fly / Noclip / ESP quick bar (fly works on phone)
+	- Move tab: Speed / Fly / Noclip / ESP quick bar (fly works on phone) + Fullbright
 	- Drag, minimize, close, floating toggle button
 	- Debug box + on-screen error box
 ]]
@@ -859,7 +859,7 @@ do
 	local platform = (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled) and "Mobile" or "PC"
 	infoRow(info, "Platform", platform)
 	infoRow(info, "Toggle key", CONFIG.ToggleKey.Name)
-	infoRow(info, "Version", "0.12")
+	infoRow(info, "Version", "0.13")
 end
 
 -- Actions
@@ -1607,6 +1607,94 @@ do
 	end
 	numberRow("Walk speed", "WalkSpeed", 1, 500)
 	numberRow("Fly speed", "FlySpeed", 1, 500)
+
+	-- Fullbright (client-side lighting override, only you see it)
+	local Lighting = game:GetService("Lighting")
+	local fullbright = false
+	local savedLighting = nil
+	local savedAtmospheres = {} -- [Atmosphere] = { Density, Haze }
+	local FULLBRIGHT_COLOR = Color3.fromRGB(190, 190, 190)
+
+	local visualCard = createCard(page, "Visuals", "Fullbright removes darkness, shadows and fog so everything is lit.")
+	local fbBtn = create("TextButton", {
+		Parent = visualCard,
+		LayoutOrder = nextOrder(),
+		Size = UDim2.new(1, 0, 0, 40),
+		Text = "Fullbright",
+		TextColor3 = Theme.Text,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 14,
+		AutoButtonColor = false,
+		BackgroundColor3 = Theme.Elevated,
+		BorderSizePixel = 0,
+	}, { corner(8) })
+
+	local function renderFullbright()
+		fbBtn.Text = fullbright and "Fullbright ✓" or "Fullbright"
+		tween(fbBtn, 0.2, { BackgroundColor3 = fullbright and Theme.Accent or Theme.Elevated })
+	end
+	onAccent(renderFullbright)
+
+	local function setFullbright(value)
+		if value == fullbright then
+			return
+		end
+		fullbright = value
+		if value then
+			-- remember the game's lighting so we can put it back
+			savedLighting = {
+				Brightness = Lighting.Brightness,
+				GlobalShadows = Lighting.GlobalShadows,
+				Ambient = Lighting.Ambient,
+				OutdoorAmbient = Lighting.OutdoorAmbient,
+				FogEnd = Lighting.FogEnd,
+			}
+			table.clear(savedAtmospheres)
+			for _, child in ipairs(Lighting:GetChildren()) do
+				if child:IsA("Atmosphere") then
+					savedAtmospheres[child] = { Density = child.Density, Haze = child.Haze }
+				end
+			end
+		else
+			if savedLighting then
+				for prop, original in pairs(savedLighting) do
+					Lighting[prop] = original
+				end
+				savedLighting = nil
+			end
+			for atmosphere, original in pairs(savedAtmospheres) do
+				if atmosphere.Parent then
+					atmosphere.Density = original.Density
+					atmosphere.Haze = original.Haze
+				end
+			end
+			table.clear(savedAtmospheres)
+		end
+		renderFullbright()
+		notify("Fullbright " .. (value and "enabled" or "disabled"))
+	end
+
+	fbBtn.MouseButton1Click:Connect(function()
+		setFullbright(not fullbright)
+	end)
+
+	-- Re-applied every frame, because many games keep changing their lighting
+	RunService.Heartbeat:Connect(function()
+		if not fullbright then
+			return
+		end
+		Lighting.Brightness = 2
+		Lighting.GlobalShadows = false
+		Lighting.Ambient = FULLBRIGHT_COLOR
+		Lighting.OutdoorAmbient = FULLBRIGHT_COLOR
+		Lighting.FogEnd = 9e9
+		for atmosphere in pairs(savedAtmospheres) do
+			if atmosphere.Parent then
+				atmosphere.Density = 0
+				atmosphere.Haze = 0
+			end
+		end
+	end)
 
 	-- Keyboard up/down for fly (ignored while typing in a box)
 	UserInputService.InputBegan:Connect(function(input, gameProcessed)
