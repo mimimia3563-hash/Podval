@@ -1,9 +1,9 @@
 --[[
-	AdminPanelUI v0.10  (LocalScript)
+	AdminPanelUI v0.11  (LocalScript)
 	Put in: StarterPlayer > StarterPlayerScripts
 
 	- One script, auto PC / mobile layout
-	- Actions tab: configurable, stoppable teleport loop + item watcher
+	- Actions tab: configurable, stoppable teleport loop + Gems (watcher + random teleport)
 	- Move tab: Speed / Fly / Noclip / ESP quick bar (fly works on phone)
 	- Drag, minimize, close, floating toggle button
 	- Debug box + on-screen error box
@@ -62,6 +62,7 @@ local CONFIG = {
 		CheckExisting = true, -- also go to matching items that already exist when you press Start
 		StaySeconds = 0.5, -- how long to stay at an item before returning
 		Offset = Vector3.new(0, 0, 0), -- add height (e.g. 0, 3, 0) if you get stuck inside an item
+		ReturnAfterRandom = true, -- random Gem button: true = go back to your position afterwards, false = stay
 	},
 }
 
@@ -859,7 +860,7 @@ do
 	local platform = (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled) and "Mobile" or "PC"
 	infoRow(info, "Platform", platform)
 	infoRow(info, "Toggle key", CONFIG.ToggleKey.Name)
-	infoRow(info, "Version", "0.10")
+	infoRow(info, "Version", "0.11")
 end
 
 -- Actions
@@ -1007,20 +1008,31 @@ do
 
 	local itemCard = createCard(
 		page,
-		"Item teleport",
-		"Watches for: " .. table.concat(itemConfig.Names, ", ") .. ". When one spawns you teleport to it, then back to where you were."
+		"Gems",
+		"Gem names: " .. table.concat(itemConfig.Names, ", ") .. ". The watcher teleports you to a Gem when it spawns, then back. The random button goes to a Gem that exists right now."
 	)
 	local itemBtn = create("TextButton", {
 		Parent = itemCard,
 		LayoutOrder = nextOrder(),
 		Size = UDim2.new(1, 0, 0, 40),
-		Text = "Start item watcher",
+		Text = "Start gem watcher",
 		TextColor3 = Theme.Text,
 		Font = Enum.Font.GothamMedium,
 		TextSize = 14,
 		BorderSizePixel = 0,
 	}, { corner(8) })
 	addButtonFeedback(itemBtn, Theme.Elevated, Theme.Stroke, Theme.Surface)
+	local randomBtn = create("TextButton", {
+		Parent = itemCard,
+		LayoutOrder = nextOrder(),
+		Size = UDim2.new(1, 0, 0, 40),
+		Text = "Teleport to random Gem",
+		TextColor3 = Theme.Text,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 14,
+		BorderSizePixel = 0,
+	}, { corner(8) })
+	addButtonFeedback(randomBtn, Theme.Elevated, Theme.Stroke, Theme.Surface)
 	local itemStatus = label(itemCard, "Status: off", 13, Theme.SubText, false)
 
 	local watching = false
@@ -1134,10 +1146,72 @@ do
 		processQueue()
 	end
 
+
+	-- Random Gem: scan for every Gem that exists right now, pick one at random
+	local function findGems()
+		local gems = {}
+		for _, inst in ipairs(workspace:GetDescendants()) do
+			if itemNames[inst.Name] and not (inst.Parent and itemNames[inst.Parent.Name]) and resolveTarget(inst) then
+				table.insert(gems, inst)
+			end
+		end
+		return gems
+	end
+
+	local function teleportToRandomGem()
+		if processing then
+			itemStatus.Text = "Status: busy, try again in a moment"
+			return
+		end
+		local gems = findGems()
+		if #gems == 0 then
+			itemStatus.Text = "Status: no Gems found right now"
+			notify("No Gems found")
+			return
+		end
+		local root, char = getLivingRoot()
+		if not root then
+			itemStatus.Text = "Status: character not ready"
+			return
+		end
+
+		processing = true
+		local gem = gems[math.random(1, #gems)]
+		local cf = resolveTarget(gem)
+		if cf and gem.Parent then
+			local origin = root.CFrame
+			itemStatus.Text = "Status: teleported to " .. gem.Name .. " (random of " .. #gems .. ")"
+			teleportRoot(root, cf + itemConfig.Offset)
+			notify("Teleported to " .. gem.Name)
+
+			if itemConfig.ReturnAfterRandom then
+				task.wait(math.max(0, tonumber(itemConfig.StaySeconds) or 0.5))
+				local root2, char2 = getLivingRoot()
+				if root2 and char2 == char then
+					teleportRoot(root2, origin)
+					itemStatus.Text = "Status: returned to your position"
+					notify("Returned to your position")
+				end
+			end
+		else
+			itemStatus.Text = "Status: that Gem disappeared, try again"
+		end
+		processing = false
+
+		-- a Gem may have spawned while we were busy
+		if watching and #queue > 0 then
+			processQueue()
+		end
+	end
+
+	randomBtn.MouseButton1Click:Connect(function()
+		task.spawn(teleportToRandomGem)
+	end)
+
 	itemBtn.MouseButton1Click:Connect(function()
 		watching = not watching
 		if watching then
-			itemBtn.Text = "Stop item watcher ✓"
+			itemBtn.Text = "Stop gem watcher ✓"
 			itemStatus.Text = "Status: watching..."
 			table.clear(seen)
 			table.clear(queue)
@@ -1147,16 +1221,16 @@ do
 					onInstance(inst)
 				end
 			end
-			notify("Item watcher started")
+			notify("Gem watcher started")
 		else
-			itemBtn.Text = "Start item watcher"
+			itemBtn.Text = "Start gem watcher"
 			itemStatus.Text = "Status: off"
 			if watchConn then
 				watchConn:Disconnect()
 				watchConn = nil
 			end
 			table.clear(queue)
-			notify("Item watcher stopped")
+			notify("Gem watcher stopped")
 		end
 	end)
 end
