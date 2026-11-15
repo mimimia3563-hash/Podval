@@ -1,9 +1,9 @@
 --[[
-	AdminPanelUI v0.11  (LocalScript)
+	AdminPanelUI v0.12  (LocalScript)
 	Put in: StarterPlayer > StarterPlayerScripts
 
 	- One script, auto PC / mobile layout
-	- Actions tab: configurable, stoppable teleport loop + Gems (watcher + random teleport)
+	- Actions tab: configurable, stoppable teleport loop + Gems (watcher + random teleport) + coordinates teleport
 	- Move tab: Speed / Fly / Noclip / ESP quick bar (fly works on phone)
 	- Drag, minimize, close, floating toggle button
 	- Debug box + on-screen error box
@@ -859,7 +859,7 @@ do
 	local platform = (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled) and "Mobile" or "PC"
 	infoRow(info, "Platform", platform)
 	infoRow(info, "Toggle key", CONFIG.ToggleKey.Name)
-	infoRow(info, "Version", "0.11")
+	infoRow(info, "Version", "0.12")
 end
 
 -- Actions
@@ -1220,6 +1220,72 @@ do
 			table.clear(queue)
 			notify("Gem watcher stopped")
 		end
+	end)
+
+	-- Teleport to pasted coordinates (e.g. 5555, 5564, 5590)
+	local coordCard = createCard(page, "Coordinates", "Paste coordinates like 5555, 5564, 5590 and tap Teleport.")
+	local coordBox = create("TextBox", {
+		Parent = coordCard,
+		LayoutOrder = nextOrder(),
+		Size = UDim2.new(1, 0, 0, 40),
+		BackgroundColor3 = Theme.Elevated,
+		BorderSizePixel = 0,
+		ClearTextOnFocus = false,
+		ClipsDescendants = true,
+		PlaceholderText = "X, Y, Z",
+		PlaceholderColor3 = Theme.SubText,
+		Text = "",
+		TextColor3 = Theme.Text,
+		Font = Enum.Font.Gotham,
+		TextSize = 14,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, {
+		corner(8),
+		create("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }),
+	})
+	local coordBtn = create("TextButton", {
+		Parent = coordCard,
+		LayoutOrder = nextOrder(),
+		Size = UDim2.new(1, 0, 0, 40),
+		Text = "Teleport to coordinates",
+		TextColor3 = Theme.Text,
+		Font = Enum.Font.GothamMedium,
+		TextSize = 14,
+		BorderSizePixel = 0,
+	}, { corner(8) })
+	addButtonFeedback(coordBtn, Theme.Elevated, Theme.Stroke, Theme.Surface)
+	local coordStatus = label(coordCard, "Status: waiting for coordinates", 13, Theme.SubText, false)
+
+	-- Pulls the numbers out of the text, so "5555, 5564, 5590", "5555 5564 5590",
+	-- "(5555, 5564, 5590)" and "Vector3.new(5555, 5564, 5590)" all work.
+	local function parseCoordinates(text)
+		local nums = {}
+		for token in string.gmatch(text, "%-?%d*%.?%d+") do
+			local n = tonumber(token)
+			if n then
+				table.insert(nums, n)
+			end
+		end
+		if #nums == 3 then
+			return Vector3.new(nums[1], nums[2], nums[3]), 3
+		end
+		return nil, #nums
+	end
+
+	coordBtn.MouseButton1Click:Connect(function()
+		local pos, count = parseCoordinates(coordBox.Text)
+		if not pos then
+			coordStatus.Text = "Status: need 3 numbers (X, Y, Z), found " .. count
+			return
+		end
+		local root = getLivingRoot()
+		if not root then
+			coordStatus.Text = "Status: character not ready"
+			return
+		end
+		teleportRoot(root, CFrame.new(pos))
+		coordStatus.Text = string.format("Status: teleported to %g, %g, %g", pos.X, pos.Y, pos.Z)
+		notify("Teleported to coordinates")
 	end)
 end
 
