@@ -59,7 +59,7 @@ local CONFIG = {
 		LoopDelaySeconds = 1, -- Delay between completed cycles
 	},
 	ItemTeleport = {
-		Names = { "Isumrud_Sapfir", "Isumrud_Gold", "Isumrud_Blue", "Isumrud_Ametist", "Isumrud_Rubin", "Isumrud_Green", "Isumrud_Rubin1", "Isumrud_Sapfir1" },
+		Names = { "Isumrud_Sapfir", "Isumrud_Gold", "Isumrud_Blue", "Isumrud_Ametist", "Isumrud_Rubin", "Isumrud_Green", "Isumrud_Rubin1", "Isumrud_Sapfir1", "Isumrud_Ametist1" },
 		CheckExisting = true, -- also go to matching items that already exist when you press Start
 		StaySeconds = 0.5, -- how long to stay at an item before returning
 		Offset = Vector3.new(0, 0, 0), -- add height (e.g. 0, 3, 0) if you get stuck inside an item
